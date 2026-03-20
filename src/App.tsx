@@ -49,6 +49,16 @@ type RecordSummary = {
   payload: RecordPayload | null
 }
 
+type FilterOption = 'all' | 'barcode' | 'photo'
+type StatusFilter = 'all' | 'safe' | 'warning' | 'avoid' | 'unknown'
+type TrainingFilter = 'all' | 'usable' | 'excluded'
+
+type ChartDatum = {
+  label: string
+  value: number
+  tone?: 'green' | 'amber' | 'red' | 'slate'
+}
+
 const API_BASE = 'https://label-wise-server.onrender.com/api'
 
 export function App() {
@@ -59,9 +69,10 @@ export function App() {
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
   const [installationQuery, setInstallationQuery] = useState('')
   const [recordQuery, setRecordQuery] = useState('')
-  const [routeFilter, setRouteFilter] = useState<'all' | 'barcode' | 'photo'>('all')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'safe' | 'warning' | 'avoid' | 'unknown'>('all')
-  const [trainingFilter, setTrainingFilter] = useState<'all' | 'usable' | 'excluded'>('all')
+  const [routeFilter, setRouteFilter] = useState<FilterOption>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>('all')
+  const [platformFilter, setPlatformFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [updatingRecordId, setUpdatingRecordId] = useState<number | null>(null)
   const [bulkUpdating, setBulkUpdating] = useState(false)
@@ -108,6 +119,12 @@ export function App() {
     }, {})
   }, [records])
 
+  const platformOptions = useMemo(() => {
+    return Array.from(
+      new Set(records.map((record) => record.platform?.trim()).filter((value): value is string => Boolean(value))),
+    ).sort((a, b) => a.localeCompare(b))
+  }, [records])
+
   const categoryOptions = useMemo(() => {
     return Array.from(
       new Set(
@@ -120,25 +137,19 @@ export function App() {
 
   const overview = useMemo(() => {
     const usable = records.filter((record) => record.usable_for_training).length
-    const barcode = records.filter((record) => record.route_type === 'barcode').length
-    const photo = records.filter((record) => record.route_type === 'photo').length
-    const statusCounts = records.reduce<Record<string, number>>((acc, record) => {
-      const key = (record.overall_status ?? 'Unknown').toLowerCase()
-      acc[key] = (acc[key] ?? 0) + 1
-      return acc
-    }, {})
+    const safe = records.filter((record) => normalizeStatus(record.overall_status) === 'safe').length
+    const warning = records.filter((record) => normalizeStatus(record.overall_status) === 'warning').length
+    const avoid = records.filter((record) => normalizeStatus(record.overall_status) === 'avoid').length
 
     return {
       totalInstallations: installations.length,
       totalRecords: records.length,
       usableRecords: usable,
       excludedRecords: records.length - usable,
-      barcodeRecords: barcode,
-      photoRecords: photo,
+      safeRecords: safe,
+      warningRecords: warning,
+      avoidRecords: avoid,
       latestPayloadAt: records.length > 0 ? records[0].created_at : null,
-      safeCount: statusCounts.safe ?? 0,
-      warningCount: statusCounts.warning ?? 0,
-      avoidCount: statusCounts.avoid ?? 0,
     }
   }, [installations.length, records])
 
@@ -158,20 +169,20 @@ export function App() {
     const query = recordQuery.trim().toLowerCase()
     return records.filter((record) => {
       if (routeFilter !== 'all' && record.route_type !== routeFilter) return false
+      if (platformFilter !== 'all' && (record.platform ?? 'Unknown') !== platformFilter) return false
+      if (categoryFilter !== 'all' && (record.payload?.input?.category_english ?? 'Unknown') !== categoryFilter) return false
 
-      const normalizedStatus = (record.overall_status ?? 'unknown').toLowerCase()
+      const normalizedStatus = normalizeStatus(record.overall_status)
       if (statusFilter !== 'all' && normalizedStatus !== statusFilter) return false
 
       if (trainingFilter === 'usable' && !record.usable_for_training) return false
       if (trainingFilter === 'excluded' && record.usable_for_training) return false
 
-      const category = record.payload?.input?.category_english ?? ''
-      if (categoryFilter !== 'all' && category !== categoryFilter) return false
-
       if (!query) return true
 
       const productName = record.payload?.input?.product_name_original ?? ''
       const brand = record.payload?.input?.brand_original ?? ''
+      const category = record.payload?.input?.category_english ?? ''
 
       return [
         record.id.toString(),
@@ -184,12 +195,42 @@ export function App() {
         category,
       ].some((value) => value.toLowerCase().includes(query))
     })
-  }, [recordQuery, records, routeFilter, statusFilter, trainingFilter, categoryFilter])
+  }, [recordQuery, records, routeFilter, platformFilter, categoryFilter, statusFilter, trainingFilter])
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) ?? null,
     [records, selectedRecordId],
   )
+
+  const chartData = useMemo(() => {
+    const topCategories = Array.from(
+      filteredRecords.reduce<Map<string, number>>((acc, record) => {
+        const key = record.payload?.input?.category_english?.trim() || 'Unknown'
+        acc.set(key, (acc.get(key) ?? 0) + 1)
+        return acc
+      }, new Map()),
+    )
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([label, value]) => ({ label, value, tone: 'slate' as const }))
+
+    return {
+      status: [
+        { label: 'Safe', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'safe').length, tone: 'green' as const },
+        { label: 'Warning', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'warning').length, tone: 'amber' as const },
+        { label: 'Avoid', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'avoid').length, tone: 'red' as const },
+      ],
+      route: [
+        { label: 'Barcode', value: filteredRecords.filter((record) => record.route_type === 'barcode').length, tone: 'green' as const },
+        { label: 'Photo', value: filteredRecords.filter((record) => record.route_type === 'photo').length, tone: 'slate' as const },
+      ],
+      training: [
+        { label: 'Usable', value: filteredRecords.filter((record) => record.usable_for_training).length, tone: 'green' as const },
+        { label: 'Excluded', value: filteredRecords.filter((record) => !record.usable_for_training).length, tone: 'red' as const },
+      ],
+      categories: topCategories,
+    }
+  }, [filteredRecords])
 
   async function toggleTrainingEligibility(record: RecordSummary) {
     setUpdatingRecordId(record.id)
@@ -211,9 +252,7 @@ export function App() {
 
       setRecords((current) =>
         current.map((item) =>
-          item.id === record.id
-            ? applyTrainingFlag(item, !record.usable_for_training)
-            : item,
+          item.id === record.id ? applyTrainingFlag(item, !record.usable_for_training) : item,
         ),
       )
     } catch (err) {
@@ -244,12 +283,9 @@ export function App() {
         throw new Error('Failed to update filtered records')
       }
 
+      const filteredIds = new Set(filteredRecords.map((record) => record.id))
       setRecords((current) =>
-        current.map((item) =>
-          filteredRecords.some((record) => record.id === item.id)
-            ? applyTrainingFlag(item, usableForTraining)
-            : item,
-        ),
+        current.map((item) => (filteredIds.has(item.id) ? applyTrainingFlag(item, usableForTraining) : item)),
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to bulk update records')
@@ -265,73 +301,65 @@ export function App() {
           <p style={styles.kicker}>Label Wise Admin</p>
           <h1 style={styles.title}>Distillation Dashboard</h1>
           <p style={styles.subtitle}>
-            Track installation activity, inspect structured teacher payloads, filter dataset quality, and prepare a trustworthy student-model training set.
+            Inspect app activity, curate records for training, and watch how close the current dataset is to a clean export for student-model fine-tuning.
           </p>
         </div>
-        <button type="button" onClick={() => void loadDashboard()} style={styles.secondaryButton}>
-          Refresh Data
-        </button>
+        <div style={styles.heroActions}>
+          <button type="button" onClick={() => void loadDashboard()} style={styles.secondaryButton}>
+            Refresh Data
+          </button>
+        </div>
       </section>
 
-      {loading ? <p style={styles.stateText}>Loading backend data…</p> : null}
+      {loading ? <p style={styles.stateText}>Loading backend data...</p> : null}
       {error ? <p style={{ ...styles.stateText, color: '#9f2f2f' }}>{error}</p> : null}
 
       <section style={styles.summaryGrid}>
         <SummaryCard title="Installations" value={overview.totalInstallations.toString()} subtitle="Registered app instances" />
         <SummaryCard title="Payloads" value={overview.totalRecords.toString()} subtitle="Teacher records collected" />
         <SummaryCard title="Training-Eligible" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} currently excluded`} tone="green" />
+        <SummaryCard title="Status Mix" value={`${overview.safeRecords}/${overview.warningRecords}/${overview.avoidRecords}`} subtitle="Safe, warning, avoid" />
         <SummaryCard title="Latest Payload" value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'None yet'} subtitle="Most recent ingested record" wide />
       </section>
 
-      <section style={styles.visualGrid}>
-        <article style={styles.card}>
-          <div style={styles.cardHeaderCompact}>
-            <div>
-              <h2 style={styles.cardTitle}>Distillation Pipeline</h2>
-              <p style={styles.cardSubtitle}>A truthful workflow view of where the dataset currently stands.</p>
-            </div>
+      <section style={styles.pipelineCard}>
+        <div style={styles.cardHeader}>
+          <div>
+            <h2 style={styles.cardTitle}>Distillation Pipeline</h2>
+            <p style={styles.cardSubtitle}>This is a truthful workflow view. Data collection and curation are live; training and evaluation remain future stages until you run the actual pipeline.</p>
           </div>
-          <div style={styles.pipelineRow}>
-            <PipelineStep label="Collected" value={overview.totalRecords} active />
-            <PipelineStep label="Filtered" value={overview.usableRecords} />
-            <PipelineStep label="Prepared" value={0} />
-            <PipelineStep label="Training" value={0} />
-            <PipelineStep label="Evaluated" value={0} />
-            <PipelineStep label="Deployed" value={0} />
-          </div>
-        </article>
+        </div>
+        <div style={styles.pipelineRow}>
+          <PipelineStep label="Collected" value={overview.totalRecords} active />
+          <PipelineStep label="Filtered" value={overview.usableRecords} />
+          <PipelineStep label="Prepared" value={0} />
+          <PipelineStep label="Training" value={0} />
+          <PipelineStep label="Evaluated" value={0} />
+          <PipelineStep label="Deployed" value={0} />
+        </div>
+      </section>
 
-        <article style={styles.card}>
-          <div style={styles.cardHeaderCompact}>
-            <div>
-              <h2 style={styles.cardTitle}>Visual Summary</h2>
-              <p style={styles.cardSubtitle}>Quick status and route-level distribution of current payload records.</p>
-            </div>
-          </div>
-          <div style={styles.metricsGrid}>
-            <MetricBar title="Status Mix" items={[
-              { label: 'Safe', value: overview.safeCount, color: '#2f7a4b' },
-              { label: 'Warning', value: overview.warningCount, color: '#c98b1c' },
-              { label: 'Avoid', value: overview.avoidCount, color: '#c44737' },
-            ]} />
-            <MetricBar title="Route Split" items={[
-              { label: 'Barcode', value: overview.barcodeRecords, color: '#2f7a4b' },
-              { label: 'Photo', value: overview.photoRecords, color: '#5a8aa5' },
-            ]} />
-            <MetricBar title="Training State" items={[
-              { label: 'Usable', value: overview.usableRecords, color: '#2f7a4b' },
-              { label: 'Excluded', value: overview.excludedRecords, color: '#a1443b' },
-            ]} />
-          </div>
-        </article>
+      <section style={styles.chartsGrid}>
+        <ChartCard title="Status Distribution" subtitle="Filtered record outcomes">
+          <HorizontalBarChart data={chartData.status} emptyLabel="No status data in current filter." />
+        </ChartCard>
+        <ChartCard title="Route Split" subtitle="Barcode versus photo ingestion">
+          <HorizontalBarChart data={chartData.route} emptyLabel="No route data in current filter." />
+        </ChartCard>
+        <ChartCard title="Training Readiness" subtitle="Usable versus excluded records">
+          <HorizontalBarChart data={chartData.training} emptyLabel="No training-state data in current filter." />
+        </ChartCard>
+        <ChartCard title="Top Categories" subtitle="Most common filtered categories">
+          <HorizontalBarChart data={chartData.categories} emptyLabel="No category data in current filter." />
+        </ChartCard>
       </section>
 
       <section style={styles.grid}>
         <article style={styles.card}>
-          <div style={styles.cardHeaderCompact}>
+          <div style={styles.cardHeader}>
             <div>
               <h2 style={styles.cardTitle}>Installations</h2>
-              <p style={styles.cardSubtitle}>Observe app registrations and recent installation activity.</p>
+              <p style={styles.cardSubtitle}>Track app registrations and the volume of records each installation has already sent.</p>
             </div>
             <span style={styles.badge}>{filteredInstallations.length}</span>
           </div>
@@ -351,6 +379,7 @@ export function App() {
                   <th style={styles.th}>Platform</th>
                   <th style={styles.th}>App Version</th>
                   <th style={styles.th}>Records</th>
+                  <th style={styles.th}>Created</th>
                   <th style={styles.th}>Last Seen</th>
                 </tr>
               </thead>
@@ -361,12 +390,13 @@ export function App() {
                     <td style={styles.td}>{item.platform ?? 'Unknown'}</td>
                     <td style={styles.td}>{item.app_version ?? 'Unknown'}</td>
                     <td style={styles.td}>{installationCounts[item.installation_id] ?? 0}</td>
+                    <td style={styles.td}>{formatDateTime(item.created_at)}</td>
                     <td style={styles.td}>{formatDateTime(item.last_seen_at)}</td>
                   </tr>
                 ))}
                 {filteredInstallations.length === 0 ? (
                   <tr>
-                    <td style={styles.emptyCell} colSpan={5}>No installations match the current filter.</td>
+                    <td style={styles.emptyCell} colSpan={6}>No installations match the current filter.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -375,63 +405,58 @@ export function App() {
         </article>
 
         <article style={styles.card}>
-          <div style={styles.cardHeaderCompact}>
+          <div style={styles.cardHeader}>
             <div>
               <h2 style={styles.cardTitle}>Payload Records</h2>
-              <p style={styles.cardSubtitle}>Inspect records, filter by category/status/product, and curate training inclusion at record or filtered-set level.</p>
+              <p style={styles.cardSubtitle}>Filter by product, category, status, route, and training state. Curate one record or bulk-update the currently visible slice.</p>
             </div>
             <span style={styles.badge}>{filteredRecords.length}</span>
           </div>
 
           <div style={styles.filtersRow}>
             <input
-              style={{ ...styles.input, flex: 1, marginBottom: 0 }}
-              placeholder="Search record, product, brand, route, or installation"
+              style={{ ...styles.input, ...styles.flexGrow, marginBottom: 0 }}
+              placeholder="Search product, brand, category, route, or installation"
               value={recordQuery}
               onChange={(event) => setRecordQuery(event.target.value)}
             />
-            <select style={styles.select} value={routeFilter} onChange={(event) => setRouteFilter(event.target.value as typeof routeFilter)}>
+            <select style={styles.select} value={routeFilter} onChange={(event) => setRouteFilter(event.target.value as FilterOption)}>
               <option value="all">All routes</option>
               <option value="barcode">Barcode</option>
               <option value="photo">Photo</option>
             </select>
-            <select style={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+            <select style={styles.select} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
               <option value="all">All statuses</option>
               <option value="safe">Safe</option>
               <option value="warning">Warning</option>
               <option value="avoid">Avoid</option>
               <option value="unknown">Unknown</option>
             </select>
-            <select style={styles.select} value={trainingFilter} onChange={(event) => setTrainingFilter(event.target.value as typeof trainingFilter)}>
+            <select style={styles.select} value={trainingFilter} onChange={(event) => setTrainingFilter(event.target.value as TrainingFilter)}>
               <option value="all">All training states</option>
               <option value="usable">Usable</option>
               <option value="excluded">Excluded</option>
             </select>
+            <select style={styles.select} value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)}>
+              <option value="all">All platforms</option>
+              {platformOptions.map((platform) => (
+                <option key={platform} value={platform}>{platform}</option>
+              ))}
+            </select>
             <select style={styles.select} value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
               <option value="all">All categories</option>
-              {categoryOptions.map((option) => (
-                <option key={option} value={option}>{option}</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>{category}</option>
               ))}
             </select>
           </div>
 
-          <div style={styles.bulkActionRow}>
-            <span style={styles.bulkActionLabel}>{filteredRecords.length} filtered records</span>
-            <button
-              type="button"
-              style={styles.actionButtonPositive}
-              onClick={() => void bulkUpdateTrainingEligibility(true)}
-              disabled={bulkUpdating || filteredRecords.length === 0}
-            >
-              {bulkUpdating ? 'Saving…' : 'Include filtered'}
+          <div style={styles.bulkActionsRow}>
+            <button type="button" style={styles.actionButtonPositive} disabled={bulkUpdating || filteredRecords.length === 0} onClick={() => void bulkUpdateTrainingEligibility(true)}>
+              {bulkUpdating ? 'Saving...' : `Include Filtered (${filteredRecords.length})`}
             </button>
-            <button
-              type="button"
-              style={styles.actionButtonMuted}
-              onClick={() => void bulkUpdateTrainingEligibility(false)}
-              disabled={bulkUpdating || filteredRecords.length === 0}
-            >
-              {bulkUpdating ? 'Saving…' : 'Exclude filtered'}
+            <button type="button" style={styles.actionButtonMuted} disabled={bulkUpdating || filteredRecords.length === 0} onClick={() => void bulkUpdateTrainingEligibility(false)}>
+              {bulkUpdating ? 'Saving...' : `Exclude Filtered (${filteredRecords.length})`}
             </button>
           </div>
 
@@ -443,8 +468,10 @@ export function App() {
                   <th style={styles.th}>Product</th>
                   <th style={styles.th}>Category</th>
                   <th style={styles.th}>Installation</th>
+                  <th style={styles.th}>Route</th>
                   <th style={styles.th}>Status</th>
                   <th style={styles.th}>Training</th>
+                  <th style={styles.th}>Created</th>
                   <th style={styles.th}>Actions</th>
                 </tr>
               </thead>
@@ -455,30 +482,23 @@ export function App() {
                     <td style={styles.td}>
                       <div style={styles.productCellTitle}>{item.payload?.input?.product_name_original ?? 'Unknown product'}</div>
                       <div style={styles.productCellMeta}>{item.payload?.input?.brand_original ?? 'Unknown brand'}</div>
-                      <div style={styles.productCellMeta}>{formatDateTime(item.created_at)}</div>
                     </td>
                     <td style={styles.td}>{item.payload?.input?.category_english ?? 'Unknown'}</td>
                     <td style={styles.td}>{item.installation_id}</td>
-                    <td style={styles.td}>
-                      <span style={statusPillStyle(item.overall_status)}>{item.overall_status ?? 'Unknown'}</span>
-                    </td>
+                    <td style={styles.td}>{item.route_type ?? 'Unknown'}</td>
+                    <td style={styles.td}><span style={statusPillStyle(item.overall_status)}>{displayStatus(item.overall_status)}</span></td>
                     <td style={styles.td}>{item.usable_for_training ? 'Usable' : 'Excluded'}</td>
+                    <td style={styles.td}>{formatDateTime(item.created_at)}</td>
                     <td style={styles.td}>
                       <div style={styles.actionRow}>
-                        <button type="button" style={styles.actionButton} onClick={() => setSelectedRecordId(item.id)}>
-                          Inspect
-                        </button>
+                        <button type="button" style={styles.actionButton} onClick={() => setSelectedRecordId(item.id)}>Inspect</button>
                         <button
                           type="button"
                           style={item.usable_for_training ? styles.actionButtonMuted : styles.actionButtonPositive}
                           onClick={() => void toggleTrainingEligibility(item)}
                           disabled={updatingRecordId === item.id}
                         >
-                          {updatingRecordId === item.id
-                            ? 'Saving…'
-                            : item.usable_for_training
-                              ? 'Exclude'
-                              : 'Re-include'}
+                          {updatingRecordId === item.id ? 'Saving...' : item.usable_for_training ? 'Exclude' : 'Include'}
                         </button>
                       </div>
                     </td>
@@ -486,7 +506,7 @@ export function App() {
                 ))}
                 {filteredRecords.length === 0 ? (
                   <tr>
-                    <td style={styles.emptyCell} colSpan={7}>No payload records match the current filters.</td>
+                    <td style={styles.emptyCell} colSpan={9}>No payload records match the current filters.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -496,10 +516,10 @@ export function App() {
       </section>
 
       <section style={styles.detailCard}>
-        <div style={styles.cardHeaderCompact}>
+        <div style={styles.cardHeader}>
           <div>
             <h2 style={styles.cardTitle}>Payload Detail</h2>
-            <p style={styles.cardSubtitle}>Inspect the exact teacher payload before export or student-model fine-tuning.</p>
+            <p style={styles.cardSubtitle}>Inspect one structured teacher payload before training export. This is the closest operational view of what the future distillation pipeline will consume.</p>
           </div>
         </div>
         {selectedRecord ? (
@@ -509,7 +529,7 @@ export function App() {
               <DetailRow label="Created" value={formatDateTime(selectedRecord.created_at)} />
               <DetailRow label="Installation" value={selectedRecord.installation_id} />
               <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unknown'} />
-              <DetailRow label="Status" value={selectedRecord.overall_status ?? 'Unknown'} />
+              <DetailRow label="Status" value={displayStatus(selectedRecord.overall_status)} />
               <DetailRow label="Training" value={selectedRecord.usable_for_training ? 'Usable' : 'Excluded'} />
             </DetailSection>
             <DetailSection title="Input Snapshot">
@@ -523,7 +543,7 @@ export function App() {
               <DetailRow label="Allergens" value={joinList(selectedRecord.payload?.input?.allergens_english)} multiline />
             </DetailSection>
             <DetailSection title="Teacher Output">
-              <DetailRow label="Overall status" value={selectedRecord.payload?.teacher_result?.overall_status ?? 'Unknown'} />
+              <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'Unknown')} />
               <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'Unavailable'} multiline />
               <DetailRow label="Ran evaluations" value={joinList(selectedRecord.payload?.teacher_result?.ran_evaluations)} multiline />
               <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
@@ -539,22 +559,6 @@ export function App() {
       </section>
     </main>
   )
-}
-
-function applyTrainingFlag(record: RecordSummary, usableForTraining: boolean): RecordSummary {
-  return {
-    ...record,
-    usable_for_training: usableForTraining,
-    payload: record.payload
-      ? {
-          ...record.payload,
-          metadata: {
-            ...(record.payload.metadata ?? {}),
-            usable_for_training: usableForTraining,
-          },
-        }
-      : record.payload,
-  }
 }
 
 function SummaryCard({
@@ -594,31 +598,52 @@ function PipelineStep({ label, value, active = false }: { label: string; value: 
   )
 }
 
-function MetricBar({ title, items }: { title: string; items: Array<{ label: string; value: number; color: string }> }) {
-  const total = items.reduce((sum, item) => sum + item.value, 0)
+function ChartCard({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
-    <section style={styles.metricCard}>
-      <h3 style={styles.metricTitle}>{title}</h3>
-      <div style={styles.metricStack}>
-        {items.map((item) => {
-          const width = total > 0 ? `${(item.value / total) * 100}%` : '0%'
-          return <span key={item.label} style={{ ...styles.metricSegment, width, background: item.color }} />
-        })}
-      </div>
-      <div style={styles.metricLegend}>
-        {items.map((item) => (
-          <div key={item.label} style={styles.metricLegendItem}>
-            <span style={{ ...styles.metricDot, background: item.color }} />
-            <span style={styles.metricLegendText}>{item.label}</span>
-            <strong style={styles.metricLegendValue}>{item.value}</strong>
-          </div>
-        ))}
-      </div>
-    </section>
+    <article style={styles.chartCard}>
+      <h3 style={styles.chartTitle}>{title}</h3>
+      <p style={styles.chartSubtitle}>{subtitle}</p>
+      {children}
+    </article>
   )
 }
 
-function DetailSection({ title, children, fullWidth = false }: { title: string; children: ReactNode; fullWidth?: boolean }) {
+function HorizontalBarChart({ data, emptyLabel }: { data: ChartDatum[]; emptyLabel: string }) {
+  const max = Math.max(...data.map((item) => item.value), 0)
+
+  if (data.length === 0 || max === 0) {
+    return <p style={styles.emptyPanelText}>{emptyLabel}</p>
+  }
+
+  return (
+    <div style={styles.chartBars}>
+      {data.map((item) => {
+        const width = max === 0 ? 0 : Math.max((item.value / max) * 100, item.value > 0 ? 8 : 0)
+        return (
+          <div key={item.label} style={styles.chartRow}>
+            <div style={styles.chartRowTop}>
+              <span style={styles.chartRowLabel}>{item.label}</span>
+              <strong style={styles.chartRowValue}>{item.value}</strong>
+            </div>
+            <div style={styles.chartTrack}>
+              <div style={{ ...styles.chartFill, width: `${width}%`, ...chartTone(item.tone) }} />
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DetailSection({
+  title,
+  children,
+  fullWidth = false,
+}: {
+  title: string
+  children: ReactNode
+  fullWidth?: boolean
+}) {
   return (
     <section style={{ ...styles.detailSection, ...(fullWidth ? styles.detailSectionFull : null) }}>
       <h3 style={styles.detailTitle}>{title}</h3>
@@ -627,7 +652,15 @@ function DetailSection({ title, children, fullWidth = false }: { title: string; 
   )
 }
 
-function DetailRow({ label, value, multiline = false }: { label: string; value: string; multiline?: boolean }) {
+function DetailRow({
+  label,
+  value,
+  multiline = false,
+}: {
+  label: string
+  value: string
+  multiline?: boolean
+}) {
   return (
     <div style={styles.detailRow}>
       <span style={styles.detailLabel}>{label}</span>
@@ -636,29 +669,77 @@ function DetailRow({ label, value, multiline = false }: { label: string; value: 
   )
 }
 
+function applyTrainingFlag(record: RecordSummary, usableForTraining: boolean): RecordSummary {
+  return {
+    ...record,
+    usable_for_training: usableForTraining,
+    payload: record.payload
+      ? {
+          ...record.payload,
+          metadata: {
+            ...(record.payload.metadata ?? {}),
+            usable_for_training: usableForTraining,
+          },
+        }
+      : record.payload,
+  }
+}
+
+function normalizeStatus(status: string | null): 'safe' | 'warning' | 'avoid' | 'unknown' {
+  const normalized = (status ?? 'unknown').toLowerCase()
+  if (normalized === 'safe' || normalized === 'warning' || normalized === 'avoid') {
+    return normalized
+  }
+  return 'unknown'
+}
+
+function displayStatus(status: string | null): string {
+  const normalized = normalizeStatus(status)
+  if (normalized === 'unknown') return 'Unknown'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
 function joinList(items?: string[] | null) {
-  if (!items || items.length === 0) return 'None'
+  if (!items || items.length === 0) {
+    return 'None'
+  }
   return items.join(', ')
 }
 
 function formatDateTime(value: string) {
   const date = new Date(value)
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
     month: 'long',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  }).format(date)
+  }).formatToParts(date)
+
+  const lookup = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ''
+  return `${lookup('day')} ${lookup('month')} ${lookup('year')}, ${lookup('hour')}:${lookup('minute')}:${lookup('second')}`
+}
+
+function chartTone(tone: ChartDatum['tone']): CSSProperties {
+  if (tone === 'green') return { background: 'linear-gradient(90deg, #2f7a4b 0%, #65b17f 100%)' }
+  if (tone === 'amber') return { background: 'linear-gradient(90deg, #b77811 0%, #d7a84b 100%)' }
+  if (tone === 'red') return { background: 'linear-gradient(90deg, #a53a33 0%, #d06a63 100%)' }
+  return { background: 'linear-gradient(90deg, #4b6a59 0%, #8aa097 100%)' }
 }
 
 function statusPillStyle(status: string | null): CSSProperties {
-  const normalized = (status ?? 'Unknown').toLowerCase()
-  if (normalized === 'safe') return { ...styles.statusPill, background: '#e7f6ec', color: '#256b3f' }
-  if (normalized === 'warning') return { ...styles.statusPill, background: '#fff3df', color: '#8a5b12' }
-  if (normalized === 'avoid') return { ...styles.statusPill, background: '#ffe6e3', color: '#a1362f' }
+  const normalized = normalizeStatus(status)
+  if (normalized === 'safe') {
+    return { ...styles.statusPill, background: '#e7f6ec', color: '#256b3f' }
+  }
+  if (normalized === 'warning') {
+    return { ...styles.statusPill, background: '#fff3df', color: '#8a5b12' }
+  }
+  if (normalized === 'avoid') {
+    return { ...styles.statusPill, background: '#ffe6e3', color: '#a1362f' }
+  }
   return { ...styles.statusPill, background: '#eef2ef', color: '#617466' }
 }
 
@@ -677,6 +758,12 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'flex-start',
     gap: '24px',
     marginBottom: '24px',
+  },
+  heroActions: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
   },
   kicker: {
     margin: 0,
@@ -741,8 +828,8 @@ const styles: Record<string, CSSProperties> = {
   },
   summaryValue: {
     margin: '10px 0 8px',
-    fontSize: '26px',
-    lineHeight: 1.15,
+    fontSize: '30px',
+    lineHeight: 1.1,
   },
   summarySubtitle: {
     margin: 0,
@@ -750,54 +837,13 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.45,
   },
-  visualGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1.2fr 1fr',
-    gap: '20px',
+  pipelineCard: {
+    background: 'rgba(255,255,255,0.88)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '22px',
     marginBottom: '20px',
-  },
-  card: {
-    background: 'rgba(255,255,255,0.88)',
-    borderRadius: '24px',
-    border: '1px solid #dce7dd',
-    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
-    padding: '20px',
-  },
-  detailCard: {
-    background: 'rgba(255,255,255,0.88)',
-    borderRadius: '24px',
-    border: '1px solid #dce7dd',
-    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
-    padding: '20px',
-  },
-  cardHeaderCompact: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '16px',
-    marginBottom: '16px',
-  },
-  cardTitle: {
-    margin: 0,
-    fontSize: '26px',
-  },
-  cardSubtitle: {
-    margin: '6px 0 0',
-    color: '#65786a',
-    fontSize: '14px',
-    lineHeight: 1.45,
-    maxWidth: '780px',
-  },
-  badge: {
-    minWidth: '36px',
-    height: '36px',
-    borderRadius: '999px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#ebf6ef',
-    color: '#2f7a4b',
-    fontWeight: 800,
   },
   pipelineRow: {
     display: 'grid',
@@ -828,60 +874,112 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '28px',
     color: '#234d34',
   },
-  metricsGrid: {
+  chartsGrid: {
     display: 'grid',
-    gap: '14px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+    gap: '16px',
+    marginBottom: '20px',
   },
-  metricCard: {
-    borderRadius: '18px',
-    border: '1px solid #e3ebe5',
-    background: '#fbfdfb',
-    padding: '14px 16px',
+  chartCard: {
+    background: 'rgba(255,255,255,0.88)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '20px',
   },
-  metricTitle: {
-    margin: '0 0 10px',
-    fontSize: '16px',
+  chartTitle: {
+    margin: '0 0 6px',
+    fontSize: '20px',
   },
-  metricStack: {
+  chartSubtitle: {
+    margin: '0 0 16px',
+    color: '#65786a',
+    fontSize: '14px',
+    lineHeight: 1.45,
+  },
+  chartBars: {
     display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  chartRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  chartRowTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    fontSize: '14px',
+  },
+  chartRowLabel: {
+    color: '#30463a',
+    fontWeight: 700,
+  },
+  chartRowValue: {
+    color: '#243b2f',
+  },
+  chartTrack: {
     width: '100%',
-    height: '12px',
-    overflow: 'hidden',
-    borderRadius: '999px',
-    background: '#edf2ed',
-    marginBottom: '12px',
-  },
-  metricSegment: {
-    height: '100%',
-  },
-  metricLegend: {
-    display: 'grid',
-    gap: '8px',
-  },
-  metricLegendItem: {
-    display: 'grid',
-    gridTemplateColumns: '12px 1fr auto',
-    gap: '8px',
-    alignItems: 'center',
-  },
-  metricDot: {
-    width: '10px',
     height: '10px',
-    borderRadius: '50%',
+    borderRadius: '999px',
+    background: '#e7efe8',
+    overflow: 'hidden',
   },
-  metricLegendText: {
-    color: '#5f7365',
-    fontSize: '13px',
-  },
-  metricLegendValue: {
-    color: '#264433',
-    fontSize: '13px',
+  chartFill: {
+    height: '100%',
+    borderRadius: '999px',
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1.4fr',
+    gridTemplateColumns: '1.05fr 1.35fr',
     gap: '20px',
     marginBottom: '20px',
+  },
+  card: {
+    background: 'rgba(255,255,255,0.88)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '20px',
+    backdropFilter: 'blur(10px)',
+  },
+  detailCard: {
+    background: 'rgba(255,255,255,0.88)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '20px',
+  },
+  cardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    marginBottom: '16px',
+  },
+  cardTitle: {
+    margin: 0,
+    fontSize: '26px',
+  },
+  cardSubtitle: {
+    margin: '6px 0 0',
+    color: '#65786a',
+    fontSize: '14px',
+    lineHeight: 1.45,
+    maxWidth: '780px',
+  },
+  badge: {
+    minWidth: '36px',
+    height: '36px',
+    borderRadius: '999px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#ebf6ef',
+    color: '#2f7a4b',
+    fontWeight: 800,
   },
   input: {
     width: '100%',
@@ -890,7 +988,11 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: '14px',
     padding: '12px 14px',
     fontSize: '14px',
+    marginBottom: '14px',
     background: '#fff',
+  },
+  flexGrow: {
+    flex: 1,
   },
   select: {
     border: '1px solid #d3e2d5',
@@ -907,17 +1009,11 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: 'wrap',
     marginBottom: '14px',
   },
-  bulkActionRow: {
+  bulkActionsRow: {
     display: 'flex',
     gap: '10px',
-    alignItems: 'center',
     flexWrap: 'wrap',
     marginBottom: '14px',
-  },
-  bulkActionLabel: {
-    color: '#617466',
-    fontWeight: 700,
-    marginRight: '6px',
   },
   tableWrap: {
     overflowX: 'auto',
