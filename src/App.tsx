@@ -464,13 +464,9 @@ export function App() {
             <table style={styles.table}>
               <thead>
                 <tr>
-                  <th style={styles.th}>ID</th>
                   <th style={styles.th}>Product</th>
-                  <th style={styles.th}>Category</th>
-                  <th style={styles.th}>Installation</th>
-                  <th style={styles.th}>Route</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={styles.th}>Training</th>
+                  <th style={styles.th}>Source</th>
+                  <th style={styles.th}>Decision</th>
                   <th style={styles.th}>Created</th>
                   <th style={styles.th}>Actions</th>
                 </tr>
@@ -478,19 +474,38 @@ export function App() {
               <tbody>
                 {filteredRecords.map((item) => (
                   <tr key={item.id}>
-                    <td style={styles.tdStrong}>#{item.id}</td>
-                    <td style={styles.td}>
+                    <td style={styles.tdWide}>
+                      <div style={styles.inlineMetaLabel}>#{item.id}</div>
                       <div style={styles.productCellTitle}>{item.payload?.input?.product_name_original ?? 'Unknown product'}</div>
                       <div style={styles.productCellMeta}>{item.payload?.input?.brand_original ?? 'Unknown brand'}</div>
+                      <div style={styles.inlineMetaList}>
+                        <span>{item.payload?.input?.category_english ?? 'Unknown category'}</span>
+                        <span>{item.payload?.input?.origin_country_english ?? 'Unknown origin'}</span>
+                      </div>
                     </td>
-                    <td style={styles.td}>{item.payload?.input?.category_english ?? 'Unknown'}</td>
-                    <td style={styles.td}>{item.installation_id}</td>
-                    <td style={styles.td}>{item.route_type ?? 'Unknown'}</td>
-                    <td style={styles.td}><span style={statusPillStyle(item.overall_status)}>{displayStatus(item.overall_status)}</span></td>
-                    <td style={styles.td}>{item.usable_for_training ? 'Usable' : 'Excluded'}</td>
-                    <td style={styles.td}>{formatDateTime(item.created_at)}</td>
-                    <td style={styles.td}>
-                      <div style={styles.actionRow}>
+                    <td style={styles.tdNarrow}>
+                      <div style={styles.cellStack}>
+                        <span style={styles.inlineMetaStrong}>{item.installation_id}</span>
+                        <span style={styles.inlineMetaMuted}>{item.platform ?? 'Unknown platform'}</span>
+                        <span style={styles.inlineMetaMuted}>{item.route_type ?? 'Unknown route'}</span>
+                      </div>
+                    </td>
+                    <td style={styles.tdNarrow}>
+                      <div style={styles.cellStack}>
+                        <span style={statusPillStyle(item.overall_status)}>{displayStatus(item.overall_status)}</span>
+                        <span style={trainingStateStyle(item.usable_for_training)}>
+                          {item.usable_for_training ? 'Usable' : 'Excluded'}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={styles.tdNarrow}>
+                      <div style={styles.cellStack}>
+                        <span style={styles.inlineMetaStrong}>{formatDate(item.created_at)}</span>
+                        <span style={styles.inlineMetaMuted}>{formatTime(item.created_at)}</span>
+                      </div>
+                    </td>
+                    <td style={styles.tdNarrow}>
+                      <div style={styles.actionColumn}>
                         <button type="button" style={styles.actionButton} onClick={() => setSelectedRecordId(item.id)}>Inspect</button>
                         <button
                           type="button"
@@ -506,7 +521,7 @@ export function App() {
                 ))}
                 {filteredRecords.length === 0 ? (
                   <tr>
-                    <td style={styles.emptyCell} colSpan={9}>No payload records match the current filters.</td>
+                    <td style={styles.emptyCell} colSpan={5}>No payload records match the current filters.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -722,6 +737,25 @@ function formatDateTime(value: string) {
   return `${lookup('day')} ${lookup('month')} ${lookup('year')}, ${lookup('hour')}:${lookup('minute')}:${lookup('second')}`
 }
 
+function formatDate(value: string) {
+  const date = new Date(value)
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatTime(value: string) {
+  const date = new Date(value)
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
 function chartTone(tone: ChartDatum['tone']): CSSProperties {
   if (tone === 'green') return { background: 'linear-gradient(90deg, #2f7a4b 0%, #65b17f 100%)' }
   if (tone === 'amber') return { background: 'linear-gradient(90deg, #b77811 0%, #d7a84b 100%)' }
@@ -741,6 +775,12 @@ function statusPillStyle(status: string | null): CSSProperties {
     return { ...styles.statusPill, background: '#ffe6e3', color: '#a1362f' }
   }
   return { ...styles.statusPill, background: '#eef2ef', color: '#617466' }
+}
+
+function trainingStateStyle(usableForTraining: boolean): CSSProperties {
+  return usableForTraining
+    ? { ...styles.trainingStatePill, background: '#edf8f0', color: '#24673e' }
+    : { ...styles.trainingStatePill, background: '#fff1ef', color: '#963b34' }
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -1003,10 +1043,10 @@ const styles: Record<string, CSSProperties> = {
     color: '#274634',
   },
   filtersRow: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
     gap: '12px',
-    alignItems: 'center',
-    flexWrap: 'wrap',
+    alignItems: 'stretch',
     marginBottom: '14px',
   },
   bulkActionsRow: {
@@ -1046,6 +1086,22 @@ const styles: Record<string, CSSProperties> = {
     verticalAlign: 'top',
     fontWeight: 700,
   },
+  tdWide: {
+    padding: '12px 12px 12px 0',
+    borderBottom: '1px solid #eef3ef',
+    fontSize: '14px',
+    color: '#30463a',
+    verticalAlign: 'top',
+    minWidth: '240px',
+  },
+  tdNarrow: {
+    padding: '12px 12px 12px 0',
+    borderBottom: '1px solid #eef3ef',
+    fontSize: '14px',
+    color: '#30463a',
+    verticalAlign: 'top',
+    minWidth: '120px',
+  },
   productCellTitle: {
     fontWeight: 700,
     color: '#21382c',
@@ -1054,11 +1110,47 @@ const styles: Record<string, CSSProperties> = {
   productCellMeta: {
     color: '#6f8274',
     fontSize: '13px',
+    marginBottom: '6px',
+  },
+  inlineMetaLabel: {
+    color: '#6d8072',
+    fontSize: '12px',
+    fontWeight: 700,
+    marginBottom: '6px',
+  },
+  inlineMetaList: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    color: '#6f8274',
+    fontSize: '12px',
+    lineHeight: 1.5,
+  },
+  inlineMetaStrong: {
+    color: '#21382c',
+    fontSize: '13px',
+    fontWeight: 700,
+    overflowWrap: 'anywhere',
+  },
+  inlineMetaMuted: {
+    color: '#6f8274',
+    fontSize: '12px',
+  },
+  cellStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
   },
   actionRow: {
     display: 'flex',
     gap: '8px',
     flexWrap: 'wrap',
+  },
+  actionColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    alignItems: 'flex-start',
   },
   actionButton: {
     border: '1px solid #d6e2d8',
@@ -1090,12 +1182,22 @@ const styles: Record<string, CSSProperties> = {
   statusPill: {
     display: 'inline-flex',
     alignItems: 'center',
+    width: 'fit-content',
     borderRadius: '999px',
     padding: '6px 10px',
     fontSize: '12px',
     fontWeight: 800,
     textTransform: 'uppercase',
     letterSpacing: '0.04em',
+  },
+  trainingStatePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    borderRadius: '999px',
+    padding: '5px 10px',
+    fontSize: '12px',
+    fontWeight: 700,
   },
   emptyCell: {
     padding: '16px 0',
