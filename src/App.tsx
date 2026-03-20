@@ -19,7 +19,7 @@ type RecordSummary = {
   created_at: string
 }
 
-const API_BASE = 'http://127.0.0.1:8000/api'
+const API_BASE = 'https://label-wise-server.onrender.com/api'
 
 export function App() {
   const [installations, setInstallations] = useState<Installation[]>([])
@@ -79,7 +79,7 @@ export function App() {
             Inspect installation registrations and incoming distillation payload records.
           </p>
         </div>
-        <a href="http://127.0.0.1:8000/health" target="_blank" rel="noreferrer" style={styles.healthLink}>
+        <a href="https://label-wise-server.onrender.com/health" target="_blank" rel="noreferrer" style={styles.healthLink}>
           Open API health
         </a>
       </section>
