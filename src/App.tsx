@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 
 type Installation = {
   installation_id: string
@@ -506,7 +506,7 @@ function DetailSection({
   fullWidth = false,
 }: {
   title: string
-  children: React.ReactNode
+  children: ReactNode
   fullWidth?: boolean
 }) {
   return (
