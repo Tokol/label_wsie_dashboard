@@ -62,7 +62,9 @@ export function App() {
   const [routeFilter, setRouteFilter] = useState<'all' | 'barcode' | 'photo'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'safe' | 'warning' | 'avoid' | 'unknown'>('all')
   const [trainingFilter, setTrainingFilter] = useState<'all' | 'usable' | 'excluded'>('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [updatingRecordId, setUpdatingRecordId] = useState<number | null>(null)
+  const [bulkUpdating, setBulkUpdating] = useState(false)
 
   useEffect(() => {
     void loadDashboard()
@@ -106,11 +108,25 @@ export function App() {
     }, {})
   }, [records])
 
+  const categoryOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        records
+          .map((record) => record.payload?.input?.category_english?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ).sort((a, b) => a.localeCompare(b))
+  }, [records])
+
   const overview = useMemo(() => {
     const usable = records.filter((record) => record.usable_for_training).length
     const barcode = records.filter((record) => record.route_type === 'barcode').length
     const photo = records.filter((record) => record.route_type === 'photo').length
-    const latest = records.length > 0 ? records[0].created_at : null
+    const statusCounts = records.reduce<Record<string, number>>((acc, record) => {
+      const key = (record.overall_status ?? 'Unknown').toLowerCase()
+      acc[key] = (acc[key] ?? 0) + 1
+      return acc
+    }, {})
 
     return {
       totalInstallations: installations.length,
@@ -119,7 +135,10 @@ export function App() {
       excludedRecords: records.length - usable,
       barcodeRecords: barcode,
       photoRecords: photo,
-      latestPayloadAt: latest,
+      latestPayloadAt: records.length > 0 ? records[0].created_at : null,
+      safeCount: statusCounts.safe ?? 0,
+      warningCount: statusCounts.warning ?? 0,
+      avoidCount: statusCounts.avoid ?? 0,
     }
   }, [installations.length, records])
 
@@ -138,27 +157,21 @@ export function App() {
   const filteredRecords = useMemo(() => {
     const query = recordQuery.trim().toLowerCase()
     return records.filter((record) => {
-      if (routeFilter !== 'all' && record.route_type !== routeFilter) {
-        return false
-      }
+      if (routeFilter !== 'all' && record.route_type !== routeFilter) return false
 
       const normalizedStatus = (record.overall_status ?? 'unknown').toLowerCase()
-      if (statusFilter !== 'all' && normalizedStatus !== statusFilter) {
-        return false
-      }
+      if (statusFilter !== 'all' && normalizedStatus !== statusFilter) return false
 
-      if (trainingFilter === 'usable' && !record.usable_for_training) {
-        return false
-      }
-      if (trainingFilter === 'excluded' && record.usable_for_training) {
-        return false
-      }
+      if (trainingFilter === 'usable' && !record.usable_for_training) return false
+      if (trainingFilter === 'excluded' && record.usable_for_training) return false
+
+      const category = record.payload?.input?.category_english ?? ''
+      if (categoryFilter !== 'all' && category !== categoryFilter) return false
 
       if (!query) return true
 
       const productName = record.payload?.input?.product_name_original ?? ''
       const brand = record.payload?.input?.brand_original ?? ''
-      const category = record.payload?.input?.category_english ?? ''
 
       return [
         record.id.toString(),
@@ -171,7 +184,7 @@ export function App() {
         category,
       ].some((value) => value.toLowerCase().includes(query))
     })
-  }, [recordQuery, records, routeFilter, statusFilter, trainingFilter])
+  }, [recordQuery, records, routeFilter, statusFilter, trainingFilter, categoryFilter])
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) ?? null,
@@ -199,19 +212,7 @@ export function App() {
       setRecords((current) =>
         current.map((item) =>
           item.id === record.id
-            ? {
-                ...item,
-                usable_for_training: !record.usable_for_training,
-                payload: item.payload
-                  ? {
-                      ...item.payload,
-                      metadata: {
-                        ...(item.payload.metadata ?? {}),
-                        usable_for_training: !record.usable_for_training,
-                      },
-                    }
-                  : item.payload,
-              }
+            ? applyTrainingFlag(item, !record.usable_for_training)
             : item,
         ),
       )
@@ -222,6 +223,41 @@ export function App() {
     }
   }
 
+  async function bulkUpdateTrainingEligibility(usableForTraining: boolean) {
+    if (filteredRecords.length === 0) return
+
+    setBulkUpdating(true)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/records/training-eligibility/bulk`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          record_ids: filteredRecords.map((record) => record.id),
+          usable_for_training: usableForTraining,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to update filtered records')
+      }
+
+      setRecords((current) =>
+        current.map((item) =>
+          filteredRecords.some((record) => record.id === item.id)
+            ? applyTrainingFlag(item, usableForTraining)
+            : item,
+        ),
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to bulk update records')
+    } finally {
+      setBulkUpdating(false)
+    }
+  }
+
   return (
     <main style={styles.page}>
       <section style={styles.hero}>
@@ -229,17 +265,12 @@ export function App() {
           <p style={styles.kicker}>Label Wise Admin</p>
           <h1 style={styles.title}>Distillation Dashboard</h1>
           <p style={styles.subtitle}>
-            Track installation activity, inspect structured teacher payloads, and curate the first training-ready dataset for the Label Wise student model.
+            Track installation activity, inspect structured teacher payloads, filter dataset quality, and prepare a trustworthy student-model training set.
           </p>
         </div>
-        <div style={styles.heroActions}>
-          <button type="button" onClick={() => void loadDashboard()} style={styles.secondaryButton}>
-            Refresh Data
-          </button>
-          <a href="https://label-wise-server.onrender.com/health" target="_blank" rel="noreferrer" style={styles.healthLink}>
-            Open API health
-          </a>
-        </div>
+        <button type="button" onClick={() => void loadDashboard()} style={styles.secondaryButton}>
+          Refresh Data
+        </button>
       </section>
 
       {loading ? <p style={styles.stateText}>Loading backend data…</p> : null}
@@ -249,35 +280,55 @@ export function App() {
         <SummaryCard title="Installations" value={overview.totalInstallations.toString()} subtitle="Registered app instances" />
         <SummaryCard title="Payloads" value={overview.totalRecords.toString()} subtitle="Teacher records collected" />
         <SummaryCard title="Training-Eligible" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} currently excluded`} tone="green" />
-        <SummaryCard title="Route Split" value={`${overview.barcodeRecords} / ${overview.photoRecords}`} subtitle="Barcode vs photo records" />
-        <SummaryCard
-          title="Latest Payload"
-          value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'None yet'}
-          subtitle="Most recent ingested record"
-          wide
-        />
+        <SummaryCard title="Latest Payload" value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'None yet'} subtitle="Most recent ingested record" wide />
       </section>
 
-      <section style={styles.pipelineCard}>
-        <div style={styles.cardHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Distillation Pipeline</h2>
-            <p style={styles.cardSubtitle}>A truthful workflow view for dataset building. Training is not automated yet, but the dashboard already shows how close the dataset is to a usable student-model export.</p>
+      <section style={styles.visualGrid}>
+        <article style={styles.card}>
+          <div style={styles.cardHeaderCompact}>
+            <div>
+              <h2 style={styles.cardTitle}>Distillation Pipeline</h2>
+              <p style={styles.cardSubtitle}>A truthful workflow view of where the dataset currently stands.</p>
+            </div>
           </div>
-        </div>
-        <div style={styles.pipelineRow}>
-          <PipelineStep label="Collected" value={overview.totalRecords} active />
-          <PipelineStep label="Filtered" value={overview.usableRecords} />
-          <PipelineStep label="Prepared" value={0} />
-          <PipelineStep label="Training" value={0} />
-          <PipelineStep label="Evaluated" value={0} />
-          <PipelineStep label="Deployed" value={0} />
-        </div>
+          <div style={styles.pipelineRow}>
+            <PipelineStep label="Collected" value={overview.totalRecords} active />
+            <PipelineStep label="Filtered" value={overview.usableRecords} />
+            <PipelineStep label="Prepared" value={0} />
+            <PipelineStep label="Training" value={0} />
+            <PipelineStep label="Evaluated" value={0} />
+            <PipelineStep label="Deployed" value={0} />
+          </div>
+        </article>
+
+        <article style={styles.card}>
+          <div style={styles.cardHeaderCompact}>
+            <div>
+              <h2 style={styles.cardTitle}>Visual Summary</h2>
+              <p style={styles.cardSubtitle}>Quick status and route-level distribution of current payload records.</p>
+            </div>
+          </div>
+          <div style={styles.metricsGrid}>
+            <MetricBar title="Status Mix" items={[
+              { label: 'Safe', value: overview.safeCount, color: '#2f7a4b' },
+              { label: 'Warning', value: overview.warningCount, color: '#c98b1c' },
+              { label: 'Avoid', value: overview.avoidCount, color: '#c44737' },
+            ]} />
+            <MetricBar title="Route Split" items={[
+              { label: 'Barcode', value: overview.barcodeRecords, color: '#2f7a4b' },
+              { label: 'Photo', value: overview.photoRecords, color: '#5a8aa5' },
+            ]} />
+            <MetricBar title="Training State" items={[
+              { label: 'Usable', value: overview.usableRecords, color: '#2f7a4b' },
+              { label: 'Excluded', value: overview.excludedRecords, color: '#a1443b' },
+            ]} />
+          </div>
+        </article>
       </section>
 
       <section style={styles.grid}>
         <article style={styles.card}>
-          <div style={styles.cardHeader}>
+          <div style={styles.cardHeaderCompact}>
             <div>
               <h2 style={styles.cardTitle}>Installations</h2>
               <p style={styles.cardSubtitle}>Observe app registrations and recent installation activity.</p>
@@ -324,17 +375,17 @@ export function App() {
         </article>
 
         <article style={styles.card}>
-          <div style={styles.cardHeader}>
+          <div style={styles.cardHeaderCompact}>
             <div>
               <h2 style={styles.cardTitle}>Payload Records</h2>
-              <p style={styles.cardSubtitle}>Inspect records, mark training eligibility, and open full payload details.</p>
+              <p style={styles.cardSubtitle}>Inspect records, filter by category/status/product, and curate training inclusion at record or filtered-set level.</p>
             </div>
             <span style={styles.badge}>{filteredRecords.length}</span>
           </div>
 
           <div style={styles.filtersRow}>
             <input
-              style={{ ...styles.input, flex: 1 }}
+              style={{ ...styles.input, flex: 1, marginBottom: 0 }}
               placeholder="Search record, product, brand, route, or installation"
               value={recordQuery}
               onChange={(event) => setRecordQuery(event.target.value)}
@@ -356,6 +407,32 @@ export function App() {
               <option value="usable">Usable</option>
               <option value="excluded">Excluded</option>
             </select>
+            <select style={styles.select} value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">All categories</option>
+              {categoryOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={styles.bulkActionRow}>
+            <span style={styles.bulkActionLabel}>{filteredRecords.length} filtered records</span>
+            <button
+              type="button"
+              style={styles.actionButtonPositive}
+              onClick={() => void bulkUpdateTrainingEligibility(true)}
+              disabled={bulkUpdating || filteredRecords.length === 0}
+            >
+              {bulkUpdating ? 'Saving…' : 'Include filtered'}
+            </button>
+            <button
+              type="button"
+              style={styles.actionButtonMuted}
+              onClick={() => void bulkUpdateTrainingEligibility(false)}
+              disabled={bulkUpdating || filteredRecords.length === 0}
+            >
+              {bulkUpdating ? 'Saving…' : 'Exclude filtered'}
+            </button>
           </div>
 
           <div style={styles.tableWrap}>
@@ -364,8 +441,8 @@ export function App() {
                 <tr>
                   <th style={styles.th}>ID</th>
                   <th style={styles.th}>Product</th>
+                  <th style={styles.th}>Category</th>
                   <th style={styles.th}>Installation</th>
-                  <th style={styles.th}>Route</th>
                   <th style={styles.th}>Status</th>
                   <th style={styles.th}>Training</th>
                   <th style={styles.th}>Actions</th>
@@ -378,9 +455,10 @@ export function App() {
                     <td style={styles.td}>
                       <div style={styles.productCellTitle}>{item.payload?.input?.product_name_original ?? 'Unknown product'}</div>
                       <div style={styles.productCellMeta}>{item.payload?.input?.brand_original ?? 'Unknown brand'}</div>
+                      <div style={styles.productCellMeta}>{formatDateTime(item.created_at)}</div>
                     </td>
+                    <td style={styles.td}>{item.payload?.input?.category_english ?? 'Unknown'}</td>
                     <td style={styles.td}>{item.installation_id}</td>
-                    <td style={styles.td}>{item.route_type ?? 'Unknown'}</td>
                     <td style={styles.td}>
                       <span style={statusPillStyle(item.overall_status)}>{item.overall_status ?? 'Unknown'}</span>
                     </td>
@@ -400,7 +478,7 @@ export function App() {
                             ? 'Saving…'
                             : item.usable_for_training
                               ? 'Exclude'
-                              : 'Re-enable'}
+                              : 'Re-include'}
                         </button>
                       </div>
                     </td>
@@ -418,10 +496,10 @@ export function App() {
       </section>
 
       <section style={styles.detailCard}>
-        <div style={styles.cardHeader}>
+        <div style={styles.cardHeaderCompact}>
           <div>
             <h2 style={styles.cardTitle}>Payload Detail</h2>
-            <p style={styles.cardSubtitle}>Open one record to inspect the distillation-ready teacher payload in a cleaner format before training export.</p>
+            <p style={styles.cardSubtitle}>Inspect the exact teacher payload before export or student-model fine-tuning.</p>
           </div>
         </div>
         {selectedRecord ? (
@@ -463,6 +541,22 @@ export function App() {
   )
 }
 
+function applyTrainingFlag(record: RecordSummary, usableForTraining: boolean): RecordSummary {
+  return {
+    ...record,
+    usable_for_training: usableForTraining,
+    payload: record.payload
+      ? {
+          ...record.payload,
+          metadata: {
+            ...(record.payload.metadata ?? {}),
+            usable_for_training: usableForTraining,
+          },
+        }
+      : record.payload,
+  }
+}
+
 function SummaryCard({
   title,
   value,
@@ -500,15 +594,31 @@ function PipelineStep({ label, value, active = false }: { label: string; value: 
   )
 }
 
-function DetailSection({
-  title,
-  children,
-  fullWidth = false,
-}: {
-  title: string
-  children: ReactNode
-  fullWidth?: boolean
-}) {
+function MetricBar({ title, items }: { title: string; items: Array<{ label: string; value: number; color: string }> }) {
+  const total = items.reduce((sum, item) => sum + item.value, 0)
+  return (
+    <section style={styles.metricCard}>
+      <h3 style={styles.metricTitle}>{title}</h3>
+      <div style={styles.metricStack}>
+        {items.map((item) => {
+          const width = total > 0 ? `${(item.value / total) * 100}%` : '0%'
+          return <span key={item.label} style={{ ...styles.metricSegment, width, background: item.color }} />
+        })}
+      </div>
+      <div style={styles.metricLegend}>
+        {items.map((item) => (
+          <div key={item.label} style={styles.metricLegendItem}>
+            <span style={{ ...styles.metricDot, background: item.color }} />
+            <span style={styles.metricLegendText}>{item.label}</span>
+            <strong style={styles.metricLegendValue}>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function DetailSection({ title, children, fullWidth = false }: { title: string; children: ReactNode; fullWidth?: boolean }) {
   return (
     <section style={{ ...styles.detailSection, ...(fullWidth ? styles.detailSectionFull : null) }}>
       <h3 style={styles.detailTitle}>{title}</h3>
@@ -517,15 +627,7 @@ function DetailSection({
   )
 }
 
-function DetailRow({
-  label,
-  value,
-  multiline = false,
-}: {
-  label: string
-  value: string
-  multiline?: boolean
-}) {
+function DetailRow({ label, value, multiline = false }: { label: string; value: string; multiline?: boolean }) {
   return (
     <div style={styles.detailRow}>
       <span style={styles.detailLabel}>{label}</span>
@@ -535,27 +637,28 @@ function DetailRow({
 }
 
 function joinList(items?: string[] | null) {
-  if (!items || items.length === 0) {
-    return 'None'
-  }
+  if (!items || items.length === 0) return 'None'
   return items.join(', ')
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString()
+  const date = new Date(value)
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function statusPillStyle(status: string | null): CSSProperties {
   const normalized = (status ?? 'Unknown').toLowerCase()
-  if (normalized === 'safe') {
-    return { ...styles.statusPill, background: '#e7f6ec', color: '#256b3f' }
-  }
-  if (normalized === 'warning') {
-    return { ...styles.statusPill, background: '#fff3df', color: '#8a5b12' }
-  }
-  if (normalized === 'avoid') {
-    return { ...styles.statusPill, background: '#ffe6e3', color: '#a1362f' }
-  }
+  if (normalized === 'safe') return { ...styles.statusPill, background: '#e7f6ec', color: '#256b3f' }
+  if (normalized === 'warning') return { ...styles.statusPill, background: '#fff3df', color: '#8a5b12' }
+  if (normalized === 'avoid') return { ...styles.statusPill, background: '#ffe6e3', color: '#a1362f' }
   return { ...styles.statusPill, background: '#eef2ef', color: '#617466' }
 }
 
@@ -574,12 +677,6 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'flex-start',
     gap: '24px',
     marginBottom: '24px',
-  },
-  heroActions: {
-    display: 'flex',
-    gap: '12px',
-    alignItems: 'center',
-    flexWrap: 'wrap',
   },
   kicker: {
     margin: 0,
@@ -600,14 +697,6 @@ const styles: Record<string, CSSProperties> = {
     color: '#617466',
     fontSize: '16px',
     lineHeight: 1.5,
-  },
-  healthLink: {
-    textDecoration: 'none',
-    background: '#2f7a4b',
-    color: '#fff',
-    padding: '12px 16px',
-    borderRadius: '999px',
-    fontWeight: 700,
   },
   secondaryButton: {
     border: '1px solid #d3e3d7',
@@ -652,8 +741,8 @@ const styles: Record<string, CSSProperties> = {
   },
   summaryValue: {
     margin: '10px 0 8px',
-    fontSize: '30px',
-    lineHeight: 1.1,
+    fontSize: '26px',
+    lineHeight: 1.15,
   },
   summarySubtitle: {
     margin: 0,
@@ -661,13 +750,54 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.45,
   },
-  pipelineCard: {
+  visualGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1.2fr 1fr',
+    gap: '20px',
+    marginBottom: '20px',
+  },
+  card: {
     background: 'rgba(255,255,255,0.88)',
     borderRadius: '24px',
     border: '1px solid #dce7dd',
     boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
-    padding: '22px',
-    marginBottom: '20px',
+    padding: '20px',
+  },
+  detailCard: {
+    background: 'rgba(255,255,255,0.88)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '20px',
+  },
+  cardHeaderCompact: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    marginBottom: '16px',
+  },
+  cardTitle: {
+    margin: 0,
+    fontSize: '26px',
+  },
+  cardSubtitle: {
+    margin: '6px 0 0',
+    color: '#65786a',
+    fontSize: '14px',
+    lineHeight: 1.45,
+    maxWidth: '780px',
+  },
+  badge: {
+    minWidth: '36px',
+    height: '36px',
+    borderRadius: '999px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#ebf6ef',
+    color: '#2f7a4b',
+    fontWeight: 800,
   },
   pipelineRow: {
     display: 'grid',
@@ -698,55 +828,60 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '28px',
     color: '#234d34',
   },
+  metricsGrid: {
+    display: 'grid',
+    gap: '14px',
+  },
+  metricCard: {
+    borderRadius: '18px',
+    border: '1px solid #e3ebe5',
+    background: '#fbfdfb',
+    padding: '14px 16px',
+  },
+  metricTitle: {
+    margin: '0 0 10px',
+    fontSize: '16px',
+  },
+  metricStack: {
+    display: 'flex',
+    width: '100%',
+    height: '12px',
+    overflow: 'hidden',
+    borderRadius: '999px',
+    background: '#edf2ed',
+    marginBottom: '12px',
+  },
+  metricSegment: {
+    height: '100%',
+  },
+  metricLegend: {
+    display: 'grid',
+    gap: '8px',
+  },
+  metricLegendItem: {
+    display: 'grid',
+    gridTemplateColumns: '12px 1fr auto',
+    gap: '8px',
+    alignItems: 'center',
+  },
+  metricDot: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+  },
+  metricLegendText: {
+    color: '#5f7365',
+    fontSize: '13px',
+  },
+  metricLegendValue: {
+    color: '#264433',
+    fontSize: '13px',
+  },
   grid: {
     display: 'grid',
-    gridTemplateColumns: '1.05fr 1.35fr',
+    gridTemplateColumns: '1fr 1.4fr',
     gap: '20px',
     marginBottom: '20px',
-  },
-  card: {
-    background: 'rgba(255,255,255,0.88)',
-    borderRadius: '24px',
-    border: '1px solid #dce7dd',
-    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
-    padding: '20px',
-    backdropFilter: 'blur(10px)',
-  },
-  detailCard: {
-    background: 'rgba(255,255,255,0.88)',
-    borderRadius: '24px',
-    border: '1px solid #dce7dd',
-    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
-    padding: '20px',
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '16px',
-    marginBottom: '16px',
-  },
-  cardTitle: {
-    margin: 0,
-    fontSize: '26px',
-  },
-  cardSubtitle: {
-    margin: '6px 0 0',
-    color: '#65786a',
-    fontSize: '14px',
-    lineHeight: 1.45,
-    maxWidth: '780px',
-  },
-  badge: {
-    minWidth: '36px',
-    height: '36px',
-    borderRadius: '999px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#ebf6ef',
-    color: '#2f7a4b',
-    fontWeight: 800,
   },
   input: {
     width: '100%',
@@ -755,7 +890,6 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: '14px',
     padding: '12px 14px',
     fontSize: '14px',
-    marginBottom: '14px',
     background: '#fff',
   },
   select: {
@@ -772,6 +906,18 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     flexWrap: 'wrap',
     marginBottom: '14px',
+  },
+  bulkActionRow: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginBottom: '14px',
+  },
+  bulkActionLabel: {
+    color: '#617466',
+    fontWeight: 700,
+    marginRight: '6px',
   },
   tableWrap: {
     overflowX: 'auto',
