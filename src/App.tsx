@@ -48,6 +48,12 @@ type RecordPayload = {
     usable_for_training?: boolean
     market_country?: string | null
     excluded_domains?: string[]
+    distillation_status?: DistillationStatus
+    distillation_batch_id?: string | null
+    reviewed_at?: string | null
+    exported_at?: string | null
+    used_in_training_at?: string | null
+    excluded_reason?: string | null
   }
   preferences?: Record<string, unknown>
   [key: string]: unknown
@@ -61,18 +67,42 @@ type RecordSummary = {
   platform: string | null
   overall_status: string | null
   usable_for_training: boolean
+  distillation_status: DistillationStatus
+  distillation_batch_id: string | null
+  reviewed_at: string | null
+  exported_at: string | null
+  used_in_training_at: string | null
+  excluded_reason: string | null
   created_at: string
   payload: RecordPayload | null
 }
 
+type DistillationStatus =
+  | 'pending_review'
+  | 'approved_for_distillation'
+  | 'excluded'
+  | 'exported'
+  | 'used_in_training'
+  | 'archived'
+
 type FilterOption = 'all' | 'barcode' | 'photo'
 type StatusFilter = 'all' | 'safe' | 'warning' | 'unsafe' | 'cannot_assess' | 'unknown'
 type TrainingFilter = 'all' | 'usable' | 'excluded'
+type DistillationFilter = 'all' | DistillationStatus
 
 type ChartDatum = {
   label: string
   value: number
   tone?: 'green' | 'amber' | 'red' | 'slate'
+}
+
+type DistillationExportResponse = {
+  batch_id: string
+  exported_count: number
+  records: Array<{
+    id: number
+    distillation_batch_id: string
+  }>
 }
 
 const API_BASE = 'https://label-wise-server.onrender.com/api'
@@ -98,10 +128,14 @@ export function App() {
   const [routeFilter, setRouteFilter] = useState<FilterOption>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>('all')
+  const [distillationFilter, setDistillationFilter] = useState<DistillationFilter>('all')
   const [platformFilter, setPlatformFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [updatingRecordId, setUpdatingRecordId] = useState<number | null>(null)
+  const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null)
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [lastExportBatchId, setLastExportBatchId] = useState<string | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -184,6 +218,12 @@ export function App() {
     const warning = records.filter((record) => normalizeStatus(record.overall_status) === 'warning').length
     const unsafe = records.filter((record) => normalizeStatus(record.overall_status) === 'unsafe').length
     const cannotAssess = records.filter((record) => normalizeStatus(record.overall_status) === 'cannot_assess').length
+    const pendingReview = records.filter((record) => record.distillation_status === 'pending_review').length
+    const approvedForDistillation = records.filter((record) => record.distillation_status === 'approved_for_distillation').length
+    const excludedForDistillation = records.filter((record) => record.distillation_status === 'excluded').length
+    const exported = records.filter((record) => record.distillation_status === 'exported').length
+    const usedInTraining = records.filter((record) => record.distillation_status === 'used_in_training').length
+    const archived = records.filter((record) => record.distillation_status === 'archived').length
     const recentThreshold = Date.now() - 7 * 24 * 60 * 60 * 1000
     const recentRecords = records.filter((record) => new Date(record.created_at).getTime() >= recentThreshold).length
 
@@ -196,6 +236,12 @@ export function App() {
       warningRecords: warning,
       unsafeRecords: unsafe,
       cannotAssessRecords: cannotAssess,
+      pendingReviewRecords: pendingReview,
+      approvedForDistillationRecords: approvedForDistillation,
+      excludedForDistillationRecords: excludedForDistillation,
+      exportedRecords: exported,
+      usedInTrainingRecords: usedInTraining,
+      archivedRecords: archived,
       latestPayloadAt: records.length > 0 ? records[0].created_at : null,
       recentRecords,
     }
@@ -222,6 +268,7 @@ export function App() {
 
       const normalizedStatus = normalizeStatus(record.overall_status)
       if (statusFilter !== 'all' && normalizedStatus !== statusFilter) return false
+      if (distillationFilter !== 'all' && record.distillation_status !== distillationFilter) return false
 
       if (trainingFilter === 'usable' && !record.usable_for_training) return false
       if (trainingFilter === 'excluded' && record.usable_for_training) return false
@@ -243,7 +290,7 @@ export function App() {
         category,
       ].some((value) => value.toLowerCase().includes(query))
     })
-  }, [recordQuery, records, routeFilter, platformFilter, categoryFilter, statusFilter, trainingFilter])
+  }, [recordQuery, records, routeFilter, platformFilter, categoryFilter, statusFilter, trainingFilter, distillationFilter])
 
   const paginatedInstallations = useMemo(() => {
     return filteredInstallations
@@ -259,7 +306,7 @@ export function App() {
 
   useEffect(() => {
     setRecordsPage(1)
-  }, [recordQuery, routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter])
+  }, [recordQuery, routeFilter, statusFilter, trainingFilter, distillationFilter, platformFilter, categoryFilter])
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) ?? filteredRecords[0] ?? null,
@@ -308,6 +355,18 @@ export function App() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
   }, [filteredRecords])
+
+  const pipelineStages = useMemo(
+    () => [
+      { key: 'pending_review' as const, label: 'Pending review', count: overview.pendingReviewRecords },
+      { key: 'approved_for_distillation' as const, label: 'Approved', count: overview.approvedForDistillationRecords },
+      { key: 'excluded' as const, label: 'Excluded', count: overview.excludedForDistillationRecords },
+      { key: 'exported' as const, label: 'Exported', count: overview.exportedRecords },
+      { key: 'used_in_training' as const, label: 'Used in training', count: overview.usedInTrainingRecords },
+      { key: 'archived' as const, label: 'Archived', count: overview.archivedRecords },
+    ],
+    [overview],
+  )
 
   // Keyboard navigation support - press Shift+I to load more installations, Shift+R for records
   useEffect(() => {
@@ -392,9 +451,131 @@ export function App() {
     }
   }
 
+  async function updateDistillationStatus(
+    recordIds: number[],
+    distillationStatus: DistillationStatus,
+    options?: { excludedReason?: string; distillationBatchId?: string },
+  ) {
+    if (recordIds.length === 0) return
+
+    setBulkUpdating(true)
+    setError(null)
+    try {
+      const endpoint =
+        recordIds.length === 1
+          ? `${API_BASE}/records/${recordIds[0]}/distillation-status`
+          : `${API_BASE}/records/distillation-status/bulk`
+      const payload =
+        recordIds.length === 1
+          ? {
+              distillation_status: distillationStatus,
+              excluded_reason: options?.excludedReason ?? null,
+              distillation_batch_id: options?.distillationBatchId ?? null,
+            }
+          : {
+              record_ids: recordIds,
+              distillation_status: distillationStatus,
+              excluded_reason: options?.excludedReason ?? null,
+              distillation_batch_id: options?.distillationBatchId ?? null,
+            }
+
+      const response = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to update distillation status')
+      }
+
+      const ids = new Set(recordIds)
+      setRecords((current) =>
+        current.map((item) =>
+          ids.has(item.id)
+            ? applyDistillationState(item, distillationStatus, {
+                excludedReason: options?.excludedReason,
+                distillationBatchId: options?.distillationBatchId,
+              })
+            : item,
+        ),
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update distillation status')
+    } finally {
+      setBulkUpdating(false)
+    }
+  }
+
+  async function exportApprovedRecords() {
+    const approvedIds = filteredRecords
+      .filter((record) => record.distillation_status === 'approved_for_distillation')
+      .map((record) => record.id)
+    if (approvedIds.length === 0) return
+
+    setExporting(true)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/records/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          record_ids: approvedIds,
+          include_payload: true,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to export approved records')
+      }
+
+      const data = (await response.json()) as DistillationExportResponse
+      setLastExportBatchId(data.batch_id)
+      const exportedIds = new Set(data.records.map((item) => item.id))
+      setRecords((current) =>
+        current.map((item) =>
+          exportedIds.has(item.id)
+            ? applyDistillationState(item, 'exported', {
+                distillationBatchId: data.batch_id,
+              })
+            : item,
+        ),
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export records')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function deleteRecord(recordId: number) {
+    if (!window.confirm(`Delete record #${recordId}? This cannot be undone.`)) return
+
+    setDeletingRecordId(recordId)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/records/${recordId}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete record')
+      }
+
+      setRecords((current) => current.filter((item) => item.id !== recordId))
+      if (selectedRecordId === recordId) {
+        setSelectedRecordId(null)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete record')
+    } finally {
+      setDeletingRecordId(null)
+    }
+  }
+
   const activeFilterCount = [routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter].filter(
     (value) => value !== 'all',
-  ).length + (recordQuery.trim() ? 1 : 0)
+  ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
 
   const installationsLoaded = installations.length
   const recordsLoaded = records.length
@@ -437,11 +618,11 @@ export function App() {
             </button>
             <button
               type="button"
-              onClick={() => void bulkUpdateTrainingEligibility(true)}
+              onClick={() => void exportApprovedRecords()}
               style={styles.secondaryButton}
-              disabled={bulkUpdating || filteredRecords.length === 0}
+              disabled={exporting || filteredRecords.every((record) => record.distillation_status !== 'approved_for_distillation')}
             >
-              {bulkUpdating ? 'Saving...' : `Include visible (${filteredRecords.length})`}
+              {exporting ? 'Exporting...' : 'Export approved records'}
             </button>
           </div>
         </div>
@@ -479,6 +660,34 @@ export function App() {
           value={`${overview.safeRecords}/${overview.warningRecords}/${overview.unsafeRecords}`}
           subtitle={`Safe / warning / unsafe${overview.cannotAssessRecords > 0 ? ` (+${overview.cannotAssessRecords} cannot assess)` : ''}`}
         />
+      </section>
+
+      <section style={styles.pipelinePanel}>
+        <div style={styles.pipelinePanelHeader}>
+          <div>
+            <h2 style={styles.cardTitle}>Distillation lifecycle</h2>
+            <p style={styles.cardSubtitle}>
+              Track what has been reviewed, approved, exported, used in training, or archived. Click a stage to filter the record list.
+            </p>
+          </div>
+          {lastExportBatchId ? <span style={styles.batchBadge}>Latest batch: {lastExportBatchId}</span> : null}
+        </div>
+        <div style={styles.pipelineStageGrid}>
+          {pipelineStages.map((stage) => (
+            <button
+              key={stage.key}
+              type="button"
+              style={{
+                ...styles.pipelineStageCard,
+                ...(distillationFilter === stage.key ? styles.pipelineStageCardActive : null),
+              }}
+              onClick={() => setDistillationFilter(distillationFilter === stage.key ? 'all' : stage.key)}
+            >
+              <span style={styles.pipelineStageLabel}>{stage.label}</span>
+              <strong style={styles.pipelineStageValue}>{stage.count}</strong>
+            </button>
+          ))}
+        </div>
       </section>
 
       <section style={styles.analyticsStrip}>
@@ -582,6 +791,15 @@ export function App() {
                   <option value="usable">Usable</option>
                   <option value="excluded">Excluded</option>
                 </select>
+                <select style={styles.select} value={distillationFilter} onChange={(event) => setDistillationFilter(event.target.value as DistillationFilter)}>
+                  <option value="all">All lifecycle stages</option>
+                  <option value="pending_review">Pending review</option>
+                  <option value="approved_for_distillation">Approved</option>
+                  <option value="excluded">Excluded</option>
+                  <option value="exported">Exported</option>
+                  <option value="used_in_training">Used in training</option>
+                  <option value="archived">Archived</option>
+                </select>
                 <select style={styles.select} value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)}>
                   <option value="all">All platforms</option>
                   {platformOptions.map((platform) => (
@@ -604,17 +822,25 @@ export function App() {
                   type="button"
                   style={styles.actionButtonPositive}
                   disabled={bulkUpdating || filteredRecords.length === 0}
-                  onClick={() => void bulkUpdateTrainingEligibility(true)}
+                  onClick={() => void updateDistillationStatus(filteredRecords.map((record) => record.id), 'approved_for_distillation')}
                 >
-                  {bulkUpdating ? 'Saving...' : `Mark visible as usable (${filteredRecords.length})`}
+                  {bulkUpdating ? 'Saving...' : `Approve visible (${filteredRecords.length})`}
                 </button>
                 <button
                   type="button"
                   style={styles.actionButtonMuted}
                   disabled={bulkUpdating || filteredRecords.length === 0}
-                  onClick={() => void bulkUpdateTrainingEligibility(false)}
+                  onClick={() => void updateDistillationStatus(filteredRecords.map((record) => record.id), 'excluded', { excludedReason: 'Excluded from dashboard bulk action' })}
                 >
                   {bulkUpdating ? 'Saving...' : `Exclude visible (${filteredRecords.length})`}
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  disabled={exporting || filteredRecords.every((record) => record.distillation_status !== 'approved_for_distillation')}
+                  onClick={() => void exportApprovedRecords()}
+                >
+                  {exporting ? 'Exporting...' : 'Export approved visible'}
                 </button>
               </div>
             </div>
@@ -627,8 +853,12 @@ export function App() {
                     record={item}
                     selected={selectedRecord?.id === item.id}
                     updating={updatingRecordId === item.id}
+                    deleting={deletingRecordId === item.id}
                     onSelect={() => setSelectedRecordId(item.id)}
                     onToggleTraining={() => void toggleTrainingEligibility(item)}
+                    onApprove={() => void updateDistillationStatus([item.id], 'approved_for_distillation')}
+                    onExclude={() => void updateDistillationStatus([item.id], 'excluded', { excludedReason: 'Excluded from record card action' })}
+                    onDelete={() => void deleteRecord(item.id)}
                   />
                 ))}
                 {paginatedRecords.length === 0 ? (
@@ -670,6 +900,7 @@ export function App() {
                   <div style={styles.detailSummaryStrip}>
                     <SummaryFact label="Status" value={displayStatus(selectedRecord.overall_status)} />
                     <SummaryFact label="Training" value={selectedRecord.usable_for_training ? 'Usable' : 'Excluded'} />
+                    <SummaryFact label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
                     <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
                     <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
                     <SummaryFact label="Created" value={formatDateTime(selectedRecord.created_at)} />
@@ -680,6 +911,8 @@ export function App() {
                     <DetailSection title="Record Summary">
                       <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
                       <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
+                      <DetailRow label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
+                      <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not exported yet'} />
                       <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
                     </DetailSection>
 
@@ -706,6 +939,51 @@ export function App() {
                       <DetailRow label="Ran evaluations" value={joinList(selectedRecord.payload?.teacher_result?.ran_evaluations)} multiline />
                       <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
                       <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
+                    </DetailSection>
+
+                    <DetailSection title="Distillation Actions" fullWidth>
+                      <div style={styles.detailActionRow}>
+                        <button
+                          type="button"
+                          style={styles.actionButtonPositive}
+                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'approved_for_distillation')}
+                          disabled={bulkUpdating}
+                        >
+                          Approve for distillation
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.actionButtonMuted}
+                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'excluded', { excludedReason: 'Excluded from detail panel action' })}
+                          disabled={bulkUpdating}
+                        >
+                          Exclude from distillation
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.actionButton}
+                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'used_in_training', { distillationBatchId: selectedRecord.distillation_batch_id ?? lastExportBatchId ?? undefined })}
+                          disabled={bulkUpdating}
+                        >
+                          Mark as used in training
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.actionButton}
+                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'archived', { distillationBatchId: selectedRecord.distillation_batch_id ?? undefined })}
+                          disabled={bulkUpdating}
+                        >
+                          Archive
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.actionButtonDanger}
+                          onClick={() => void deleteRecord(selectedRecord.id)}
+                          disabled={deletingRecordId === selectedRecord.id}
+                        >
+                          {deletingRecordId === selectedRecord.id ? 'Deleting...' : 'Delete record'}
+                        </button>
+                      </div>
                     </DetailSection>
 
                     <DetailSection title="Raw Payload JSON" fullWidth>
@@ -825,14 +1103,22 @@ function RecordListCard({
   record,
   selected,
   updating,
+  deleting,
   onSelect,
   onToggleTraining,
+  onApprove,
+  onExclude,
+  onDelete,
 }: {
   record: RecordSummary
   selected: boolean
   updating: boolean
+  deleting: boolean
   onSelect: () => void
   onToggleTraining: () => void
+  onApprove: () => void
+  onExclude: () => void
+  onDelete: () => void
 }) {
   return (
     <article
@@ -849,6 +1135,9 @@ function RecordListCard({
             <span style={statusPillStyle(record.overall_status)}>{displayStatus(record.overall_status)}</span>
             <span style={trainingStateStyle(record.usable_for_training)}>
               {record.usable_for_training ? 'Usable' : 'Excluded'}
+            </span>
+            <span style={distillationStatusStyle(record.distillation_status)}>
+              {displayDistillationStatus(record.distillation_status)}
             </span>
           </div>
           <h3 style={styles.recordTitle}>{record.payload?.input?.product_name_original ?? 'Unnamed product'}</h3>
@@ -879,14 +1168,47 @@ function RecordListCard({
           </button>
           <button
             type="button"
+            style={styles.actionButtonPositive}
+            onClick={(event) => {
+              event.stopPropagation()
+              onApprove()
+            }}
+            disabled={updating || deleting}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            style={styles.actionButtonMuted}
+            onClick={(event) => {
+              event.stopPropagation()
+              onExclude()
+            }}
+            disabled={updating || deleting}
+          >
+            Exclude
+          </button>
+          <button
+            type="button"
             style={record.usable_for_training ? styles.actionButtonMuted : styles.actionButtonPositive}
             onClick={(event) => {
               event.stopPropagation()
               onToggleTraining()
             }}
-            disabled={updating}
+            disabled={updating || deleting}
           >
             {updating ? 'Saving...' : record.usable_for_training ? 'Exclude' : 'Include'}
+          </button>
+          <button
+            type="button"
+            style={styles.actionButtonDanger}
+            onClick={(event) => {
+              event.stopPropagation()
+              onDelete()
+            }}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
       </div>
@@ -950,12 +1272,51 @@ function applyTrainingFlag(record: RecordSummary, usableForTraining: boolean): R
   return {
     ...record,
     usable_for_training: usableForTraining,
+    distillation_status: usableForTraining ? 'approved_for_distillation' : 'excluded',
+    excluded_reason: usableForTraining ? null : record.excluded_reason ?? 'Excluded from dashboard curation',
     payload: record.payload
       ? {
           ...record.payload,
           metadata: {
             ...(record.payload.metadata ?? {}),
             usable_for_training: usableForTraining,
+            distillation_status: usableForTraining ? 'approved_for_distillation' : 'excluded',
+          },
+        }
+      : record.payload,
+  }
+}
+
+function applyDistillationState(
+  record: RecordSummary,
+  distillationStatus: DistillationStatus,
+  options?: { excludedReason?: string; distillationBatchId?: string },
+): RecordSummary {
+  const nowIso = new Date().toISOString()
+  const usableForTraining = distillationStatus === 'excluded' ? false : true
+  const nextBatchId =
+    options?.distillationBatchId ??
+    (distillationStatus === 'exported' || distillationStatus === 'used_in_training' || distillationStatus === 'archived'
+      ? record.distillation_batch_id
+      : record.distillation_batch_id)
+  return {
+    ...record,
+    usable_for_training: usableForTraining,
+    distillation_status: distillationStatus,
+    distillation_batch_id: nextBatchId,
+    reviewed_at: distillationStatus === 'approved_for_distillation' || distillationStatus === 'excluded' ? nowIso : record.reviewed_at,
+    exported_at: distillationStatus === 'exported' ? nowIso : record.exported_at,
+    used_in_training_at: distillationStatus === 'used_in_training' ? nowIso : record.used_in_training_at,
+    excluded_reason: distillationStatus === 'excluded' ? options?.excludedReason ?? record.excluded_reason : null,
+    payload: record.payload
+      ? {
+          ...record.payload,
+          metadata: {
+            ...(record.payload.metadata ?? {}),
+            usable_for_training: usableForTraining,
+            distillation_status: distillationStatus,
+            distillation_batch_id: nextBatchId,
+            excluded_reason: distillationStatus === 'excluded' ? options?.excludedReason ?? record.excluded_reason : undefined,
           },
         }
       : record.payload,
@@ -981,6 +1342,23 @@ function displayStatus(status: string | null): string {
   if (normalized === 'unknown') return 'Unknown'
   if (normalized === 'cannot_assess') return 'Cannot Assess'
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+function displayDistillationStatus(status: DistillationStatus): string {
+  switch (status) {
+    case 'pending_review':
+      return 'Pending review'
+    case 'approved_for_distillation':
+      return 'Approved'
+    case 'excluded':
+      return 'Excluded'
+    case 'exported':
+      return 'Exported'
+    case 'used_in_training':
+      return 'Used in training'
+    case 'archived':
+      return 'Archived'
+  }
 }
 
 function joinList(items?: string[] | null) {
@@ -1059,6 +1437,25 @@ function trainingStateStyle(usableForTraining: boolean): CSSProperties {
   return usableForTraining
     ? { ...styles.trainingStatePill, background: '#edf8f0', color: '#24673e' }
     : { ...styles.trainingStatePill, background: '#fff1ef', color: '#963b34' }
+}
+
+function distillationStatusStyle(status: DistillationStatus): CSSProperties {
+  if (status === 'approved_for_distillation') {
+    return { ...styles.distillationPill, background: '#e8f4ff', color: '#1d5e87' }
+  }
+  if (status === 'excluded') {
+    return { ...styles.distillationPill, background: '#fff1ef', color: '#963b34' }
+  }
+  if (status === 'exported') {
+    return { ...styles.distillationPill, background: '#f3ecff', color: '#6a42a8' }
+  }
+  if (status === 'used_in_training') {
+    return { ...styles.distillationPill, background: '#edf8f0', color: '#24673e' }
+  }
+  if (status === 'archived') {
+    return { ...styles.distillationPill, background: '#f2f4f3', color: '#5f7166' }
+  }
+  return { ...styles.distillationPill, background: '#fff7e3', color: '#8b6408' }
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -1249,6 +1646,62 @@ const styles: Record<string, CSSProperties> = {
     color: '#617466',
     fontSize: '13px',
     lineHeight: 1.45,
+  },
+  pipelinePanel: {
+    background: 'rgba(255,255,255,0.84)',
+    borderRadius: '24px',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 14px 30px rgba(32, 68, 43, 0.08)',
+    padding: '20px',
+    marginBottom: '20px',
+  },
+  pipelinePanelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '16px',
+    alignItems: 'flex-start',
+    marginBottom: '14px',
+  },
+  batchBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '8px 12px',
+    background: '#eef3ff',
+    color: '#37539a',
+    fontWeight: 700,
+    fontSize: '12px',
+  },
+  pipelineStageGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: '12px',
+  },
+  pipelineStageCard: {
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    borderRadius: '18px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  pipelineStageCardActive: {
+    border: '1px solid #9ecab0',
+    background: '#eef8f1',
+  },
+  pipelineStageLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: '#6c8072',
+    fontWeight: 800,
+  },
+  pipelineStageValue: {
+    fontSize: '28px',
+    color: '#1f3a2d',
   },
   analyticsStrip: {
     display: 'grid',
@@ -1602,6 +2055,15 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     cursor: 'pointer',
   },
+  actionButtonDanger: {
+    border: '1px solid #f0d4d0',
+    background: '#ffe6e3',
+    color: '#8c2f30',
+    borderRadius: '999px',
+    padding: '8px 12px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
   statusPill: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -1614,6 +2076,15 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: '0.04em',
   },
   trainingStatePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    borderRadius: '999px',
+    padding: '5px 10px',
+    fontSize: '12px',
+    fontWeight: 800,
+  },
+  distillationPill: {
     display: 'inline-flex',
     alignItems: 'center',
     width: 'fit-content',
@@ -1696,6 +2167,11 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: '10px',
+  },
+  detailActionRow: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
   },
   detailRow: {
     display: 'flex',
