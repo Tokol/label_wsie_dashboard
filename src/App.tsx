@@ -136,7 +136,8 @@ export function App() {
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [lastExportBatchId, setLastExportBatchId] = useState<string | null>(null)
-  const [detailTab, setDetailTab] = useState<'overview' | 'teacher' | 'input' | 'payload'>('overview')
+  const [detailTab, setDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
+  const [showRawJson, setShowRawJson] = useState(false)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -862,6 +863,7 @@ export function App() {
                     onSelect={() => {
                       setSelectedRecordId(item.id)
                       setDetailTab('overview')
+                      setShowRawJson(false)
                     }}
                     onApprove={() => void updateDistillationStatus([item.id], 'approved_for_distillation')}
                     onExclude={() => void updateDistillationStatus([item.id], 'excluded', { excludedReason: 'Excluded from record card action' })}
@@ -904,14 +906,14 @@ export function App() {
       </section>
 
       {selectedRecord ? (
-        <div style={styles.detailDrawerBackdrop} onClick={() => setSelectedRecordId(null)}>
-          <aside
-            style={styles.detailDrawer}
+        <div style={styles.detailScreenBackdrop}>
+          <section
+            style={styles.detailScreen}
             onClick={(event) => event.stopPropagation()}
             aria-label={`Record details for record ${selectedRecord.id}`}
           >
-            <div style={styles.detailDrawerHeader}>
-              <div style={styles.detailDrawerTitleBlock}>
+            <div style={styles.detailScreenHeader}>
+              <div style={styles.detailScreenTitleBlock}>
                 <div style={styles.recordIdRow}>
                   <span style={styles.inlineMetaLabel}>#{selectedRecord.id}</span>
                   <span style={statusPillStyle(selectedRecord.overall_status)}>{displayStatus(selectedRecord.overall_status)}</span>
@@ -919,16 +921,24 @@ export function App() {
                     {displayDistillationStatus(selectedRecord.distillation_status)}
                   </span>
                 </div>
-                <h2 style={styles.detailDrawerTitle}>
+                <h2 style={styles.detailScreenTitle}>
                   {selectedRecord.payload?.input?.product_name_original ?? 'Unnamed product'}
                 </h2>
-                <p style={styles.detailDrawerSubtitle}>
+                <p style={styles.detailScreenSubtitle}>
                   {selectedRecord.payload?.input?.brand_original ?? 'Brand not provided'} · {formatDateTime(selectedRecord.created_at)}
                 </p>
               </div>
-              <button type="button" style={styles.drawerCloseButton} onClick={() => setSelectedRecordId(null)}>
-                Close
-              </button>
+              <div style={styles.detailScreenHeaderActions}>
+                <button type="button" style={styles.actionButton} onClick={() => {
+                  setDetailTab('developer')
+                  setShowRawJson(false)
+                }}>
+                  Open developer view
+                </button>
+                <button type="button" style={styles.drawerCloseButton} onClick={() => setSelectedRecordId(null)}>
+                  Back to dashboard
+                </button>
+              </div>
             </div>
 
             <div style={styles.detailSummaryStrip}>
@@ -943,7 +953,7 @@ export function App() {
             <section style={styles.detailActionsPanel}>
               <div>
                 <h3 style={styles.bulkActionsTitle}>Record actions</h3>
-                <p style={styles.bulkActionsSubtitle}>These actions apply only to the currently opened record.</p>
+                <p style={styles.bulkActionsSubtitle}>These actions apply only to this record and stay visible at the top of the inspection page.</p>
               </div>
               <div style={styles.detailActionRow}>
                 <button
@@ -993,10 +1003,11 @@ export function App() {
               <DrawerTabButton label="Overview" active={detailTab === 'overview'} onClick={() => setDetailTab('overview')} />
               <DrawerTabButton label="Teacher Output" active={detailTab === 'teacher'} onClick={() => setDetailTab('teacher')} />
               <DrawerTabButton label="Input Data" active={detailTab === 'input'} onClick={() => setDetailTab('input')} />
-              <DrawerTabButton label="Payload" active={detailTab === 'payload'} onClick={() => setDetailTab('payload')} />
+              <DrawerTabButton label="Distillation" active={detailTab === 'distillation'} onClick={() => setDetailTab('distillation')} />
+              <DrawerTabButton label="Developer" active={detailTab === 'developer'} onClick={() => setDetailTab('developer')} />
             </div>
 
-            <div style={styles.detailDrawerBody}>
+            <div style={styles.detailScreenBody}>
               {detailTab === 'overview' ? (
                 <div style={styles.detailGrid}>
                   <DetailSection title="Record Summary">
@@ -1013,13 +1024,6 @@ export function App() {
                     <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
                     <DetailRow label="Installation" value={selectedRecord.installation_id} multiline />
                     <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
-                  </DetailSection>
-
-                  <DetailSection title="Distillation Timeline" fullWidth>
-                    <DetailRow label="Ready for export" value={selectedRecord.distillation_status === 'approved_for_distillation' ? 'Yes' : 'No'} />
-                    <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not assigned yet'} />
-                    <DetailRow label="Used in training at" value={selectedRecord.used_in_training_at ? formatDateTime(selectedRecord.used_in_training_at) : 'Not used yet'} />
-                    <DetailRow label="Excluded reason" value={selectedRecord.excluded_reason ?? 'No exclusion reason recorded'} multiline />
                   </DetailSection>
                 </div>
               ) : null}
@@ -1051,21 +1055,49 @@ export function App() {
                 </div>
               ) : null}
 
-              {detailTab === 'payload' ? (
+              {detailTab === 'distillation' ? (
                 <div style={styles.detailGrid}>
-                  <DetailSection title="Payload Overview" fullWidth>
+                  <DetailSection title="Distillation Timeline" fullWidth>
+                    <DetailRow label="Ready for export" value={selectedRecord.distillation_status === 'approved_for_distillation' ? 'Yes' : 'No'} />
+                    <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not assigned yet'} />
+                    <DetailRow label="Reviewed at" value={selectedRecord.reviewed_at ? formatDateTime(selectedRecord.reviewed_at) : 'Not reviewed yet'} />
+                    <DetailRow label="Exported at" value={selectedRecord.exported_at ? formatDateTime(selectedRecord.exported_at) : 'Not exported yet'} />
+                    <DetailRow label="Used in training at" value={selectedRecord.used_in_training_at ? formatDateTime(selectedRecord.used_in_training_at) : 'Not used yet'} />
+                    <DetailRow label="Excluded reason" value={selectedRecord.excluded_reason ?? 'No exclusion reason recorded'} multiline />
+                  </DetailSection>
+                </div>
+              ) : null}
+
+              {detailTab === 'developer' ? (
+                <div style={styles.detailGrid}>
+                  <DetailSection title="Payload Inspector" fullWidth>
                     <DetailRow label="Payload schema version" value={selectedRecord.payload?.schema_version == null ? 'Not available' : String(selectedRecord.payload.schema_version)} />
                     <DetailRow label="Recorded at epoch ms" value={selectedRecord.payload?.created_at_epoch_ms == null ? 'Not available' : String(selectedRecord.payload.created_at_epoch_ms)} />
                     <DetailRow label="Preference keys" value={Object.keys(selectedRecord.payload?.preferences ?? {}).join(', ') || 'No preference payload recorded'} multiline />
                     <DetailRow label="Metadata fields" value={Object.keys(selectedRecord.payload?.metadata ?? {}).join(', ') || 'No metadata fields recorded'} multiline />
+                    <DetailRow label="Teacher fields" value={Object.keys(selectedRecord.payload?.teacher_result ?? {}).join(', ') || 'No teacher fields recorded'} multiline />
                   </DetailSection>
-                  <DetailSection title="Raw Payload JSON" fullWidth>
-                    <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre>
+                  <DetailSection title="Structured Payload Preview" fullWidth>
+                    <div style={styles.payloadPreviewGrid}>
+                      <PayloadPreviewCard title="Input block" value={`${Object.keys(selectedRecord.payload?.input ?? {}).length} fields`} subtitle="Product, brand, category, ingredients, origin, barcode." />
+                      <PayloadPreviewCard title="Teacher block" value={`${Object.keys(selectedRecord.payload?.teacher_result ?? {}).length} fields`} subtitle="Status, decision line, and executed evaluations." />
+                      <PayloadPreviewCard title="Metadata block" value={`${Object.keys(selectedRecord.payload?.metadata ?? {}).length} fields`} subtitle="Training eligibility, excluded domains, market, and distillation fields." />
+                      <PayloadPreviewCard title="Preferences block" value={`${Object.keys(selectedRecord.payload?.preferences ?? {}).length} keys`} subtitle="Preference payload passed from the app when available." />
+                    </div>
+                  </DetailSection>
+                  <DetailSection title="Raw JSON" fullWidth>
+                    <div style={styles.rawJsonHeader}>
+                      <p style={styles.bulkActionsSubtitle}>Use this only for debugging or schema inspection. The structured sections above are the primary review surface.</p>
+                      <button type="button" style={styles.actionButton} onClick={() => setShowRawJson((current) => !current)}>
+                        {showRawJson ? 'Hide raw JSON' : 'Show raw JSON'}
+                      </button>
+                    </div>
+                    {showRawJson ? <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre> : null}
                   </DetailSection>
                 </div>
               ) : null}
             </div>
-          </aside>
+          </section>
         </div>
       ) : null}
     </main>
@@ -1136,6 +1168,24 @@ function DrawerTabButton({
     >
       {label}
     </button>
+  )
+}
+
+function PayloadPreviewCard({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string
+  value: string
+  subtitle: string
+}) {
+  return (
+    <div style={styles.payloadPreviewCard}>
+      <span style={styles.factLabel}>{title}</span>
+      <strong style={styles.payloadPreviewValue}>{value}</strong>
+      <span style={styles.payloadPreviewSubtitle}>{subtitle}</span>
+    </div>
   )
 }
 
@@ -2181,29 +2231,27 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '12px',
     fontWeight: 800,
   },
-  detailDrawerBackdrop: {
+  detailScreenBackdrop: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(16, 31, 24, 0.36)',
-    backdropFilter: 'blur(6px)',
-    display: 'flex',
-    justifyContent: 'flex-end',
+    background: 'rgba(245, 250, 246, 0.96)',
     zIndex: 80,
-    padding: '20px',
+    overflowY: 'auto',
+    padding: '24px',
     boxSizing: 'border-box',
   },
-  detailDrawer: {
-    width: 'min(860px, 100%)',
-    height: '100%',
+  detailScreen: {
+    width: 'min(1380px, 100%)',
+    minHeight: 'calc(100vh - 48px)',
+    margin: '0 auto',
     borderRadius: '28px',
     background: 'linear-gradient(180deg, #fcfffd 0%, #f5faf6 100%)',
     border: '1px solid #dce7dd',
     boxShadow: '0 28px 64px rgba(15, 34, 25, 0.24)',
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden',
   },
-  detailDrawerHeader: {
+  detailScreenHeader: {
     padding: '24px 24px 18px',
     borderBottom: '1px solid #e1ebe4',
     display: 'flex',
@@ -2211,20 +2259,26 @@ const styles: Record<string, CSSProperties> = {
     gap: '16px',
     alignItems: 'flex-start',
   },
-  detailDrawerTitleBlock: {
+  detailScreenTitleBlock: {
     minWidth: 0,
   },
-  detailDrawerTitle: {
+  detailScreenTitle: {
     margin: 0,
-    fontSize: '30px',
+    fontSize: '42px',
     lineHeight: 1.05,
     color: '#173425',
   },
-  detailDrawerSubtitle: {
+  detailScreenSubtitle: {
     margin: '8px 0 0',
     color: '#62786b',
-    fontSize: '14px',
+    fontSize: '16px',
     lineHeight: 1.5,
+  },
+  detailScreenHeaderActions: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   drawerCloseButton: {
     border: '1px solid #d6e2d8',
@@ -2265,12 +2319,41 @@ const styles: Record<string, CSSProperties> = {
     background: '#173f2d',
     color: '#ffffff',
   },
-  detailDrawerBody: {
+  detailScreenBody: {
     padding: '20px 24px 24px',
-    overflowY: 'auto',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+  payloadPreviewGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+  },
+  payloadPreviewCard: {
+    borderRadius: '16px',
+    background: '#f6faf7',
+    border: '1px solid #e1ebe4',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  payloadPreviewValue: {
+    fontSize: '20px',
+    color: '#193326',
+  },
+  payloadPreviewSubtitle: {
+    fontSize: '13px',
+    lineHeight: 1.5,
+    color: '#687c70',
+  },
+  rawJsonHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+    flexWrap: 'wrap',
   },
   detailSectionShell: {
     marginTop: '18px',
