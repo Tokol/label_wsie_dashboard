@@ -216,6 +216,7 @@ export function App() {
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
+  const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -737,10 +738,34 @@ export function App() {
     }
   }
 
+  async function updateModelVersionStatus(versionId: number, nextStatus: 'active_test' | 'ready_for_test' | 'archived') {
+    setUpdatingModelVersionId(versionId)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/model-versions/${versionId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail ?? 'Failed to update model version status')
+      }
+
+      await loadDashboard()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update model version status')
+    } finally {
+      setUpdatingModelVersionId(null)
+    }
+  }
+
   const activeFilterCount = [routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter].filter(
     (value) => value !== 'all',
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
   const distillationPreview = selectedRecord ? buildDistillationExportPreview(selectedRecord) : null
+  const activeModelVersion = modelVersions.find((version) => version.status === 'active_test') ?? null
 
   if (selectedRecord) {
     return (
@@ -1014,6 +1039,40 @@ export function App() {
       <section style={styles.pipelinePanel}>
         <div style={styles.pipelinePanelHeader}>
           <div>
+            <h2 style={styles.cardTitle}>Active Test Model</h2>
+            <p style={styles.cardSubtitle}>
+              This marks the current test target for the future hosted SLM endpoint. Only one version can be active for testing at a time.
+            </p>
+          </div>
+          <span style={styles.batchBadge}>{activeModelVersion ? 'Configured' : 'Not set'}</span>
+        </div>
+        {activeModelVersion ? (
+          <article style={styles.batchCard}>
+            <div style={styles.batchCardTop}>
+              <div>
+                <p style={styles.factLabel}>Active version</p>
+                <h3 style={styles.batchCardTitle}>{activeModelVersion.model_name}</h3>
+              </div>
+              <span style={styles.batchUsedPill}>active_test</span>
+            </div>
+            <div style={styles.batchMetaList}>
+              <span>Version #{activeModelVersion.id}</span>
+              <span>Batch {activeModelVersion.batch_id}</span>
+              <span>Base model {activeModelVersion.base_model}</span>
+              <span>{activeModelVersion.activated_at ? `Activated ${formatDateTime(activeModelVersion.activated_at)}` : 'Activation time not available'}</span>
+            </div>
+          </article>
+        ) : (
+          <div style={styles.emptyStateCard}>
+            <h3 style={styles.emptyStateTitle}>No active test model selected</h3>
+            <p style={styles.emptyPanelText}>Activate one ready version below to make the current testing target explicit.</p>
+          </div>
+        )}
+      </section>
+
+      <section style={styles.pipelinePanel}>
+        <div style={styles.pipelinePanelHeader}>
+          <div>
             <h2 style={styles.cardTitle}>Distillation lifecycle</h2>
             <p style={styles.cardSubtitle}>
               Track what has been reviewed, approved, exported, used in training, or archived. Click a stage to filter the record list.
@@ -1073,6 +1132,32 @@ export function App() {
                     <span style={styles.batchFooterText}>
                       {version.artifact_uri ?? 'No artifact URI yet'}
                     </span>
+                    <div style={styles.actionRow}>
+                      <button
+                        type="button"
+                        style={styles.actionButtonPositive}
+                        disabled={updatingModelVersionId === version.id || version.status === 'active_test'}
+                        onClick={() => void updateModelVersionStatus(version.id, 'active_test')}
+                      >
+                        {updatingModelVersionId === version.id ? 'Saving...' : 'Activate for testing'}
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.actionButton}
+                        disabled={updatingModelVersionId === version.id || version.status === 'ready_for_test'}
+                        onClick={() => void updateModelVersionStatus(version.id, 'ready_for_test')}
+                      >
+                        Set ready
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.actionButtonMuted}
+                        disabled={updatingModelVersionId === version.id || version.status === 'archived'}
+                        onClick={() => void updateModelVersionStatus(version.id, 'archived')}
+                      >
+                        Archive
+                      </button>
+                    </div>
                   </div>
                   {version.metrics_json ? (
                     <div style={styles.jobMetricsBox}>
