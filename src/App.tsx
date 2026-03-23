@@ -405,8 +405,7 @@ export function App() {
           <p style={styles.kicker}>Label Wise Admin</p>
           <h1 style={styles.title}>Distillation Dashboard</h1>
           <p style={styles.subtitle}>
-            Curate teacher-model payloads without fighting cramped tables. The workspace below is optimized for review,
-            filtering, and training-readiness decisions.
+            View incoming teacher payloads in a clean dashboard that supports fast filtering and bulk training decisions.
           </p>
           <div style={styles.heroMetaRow}>
             <HeroBadge label="Last payload" value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'None yet'} />
@@ -496,7 +495,7 @@ export function App() {
             <div>
               <h2 style={styles.cardTitle}>Installations</h2>
               <p style={styles.cardSubtitle}>
-                Reduced to quick operational context so the record review flow stays dominant.
+                Installed app instances in scope for current record audit and quality workflows.
               </p>
             </div>
             <span style={styles.badge}>{filteredInstallations.length}</span>
@@ -541,7 +540,7 @@ export function App() {
           <article style={styles.card}>
             <div style={styles.cardHeader}>
               <div>
-                <h2 style={styles.cardTitle}>Payload Curation</h2>
+                <h2 style={styles.cardTitle}>Record Review</h2>
                 <p style={styles.cardSubtitle}>
                   Search first, then narrow by route, status, platform, category, or training state. Records stay readable
                   while detail stays one click away.
