@@ -148,7 +148,18 @@ export function App() {
 
   useEffect(() => {
     void loadDashboard()
-  }, [installationsPage, recordsPage])
+  }, [
+    installationsPage,
+    recordsPage,
+    installationQuery,
+    recordQuery,
+    routeFilter,
+    statusFilter,
+    trainingFilter,
+    distillationFilter,
+    platformFilter,
+    categoryFilter,
+  ])
 
   async function loadDashboard() {
     const isInitialLoad = installationsPage === 1 && recordsPage === 1
@@ -158,10 +169,31 @@ export function App() {
     try {
       const installationsSkip = (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE
       const recordsSkip = (recordsPage - 1) * RECORDS_PAGE_SIZE
+      const installationsParams = new URLSearchParams({
+        skip: String(installationsSkip),
+        limit: String(INSTALLATIONS_PAGE_SIZE),
+      })
+      if (installationQuery.trim()) {
+        installationsParams.set('query', installationQuery.trim())
+      }
+
+      const recordsParams = new URLSearchParams({
+        skip: String(recordsSkip),
+        limit: String(RECORDS_PAGE_SIZE),
+        include_payload: 'true',
+      })
+      if (recordQuery.trim()) recordsParams.set('query', recordQuery.trim())
+      if (routeFilter !== 'all') recordsParams.set('route_type', routeFilter)
+      if (statusFilter !== 'all') recordsParams.set('overall_status', statusFilter)
+      if (trainingFilter === 'usable') recordsParams.set('usable_for_training', 'true')
+      if (trainingFilter === 'excluded') recordsParams.set('usable_for_training', 'false')
+      if (distillationFilter !== 'all') recordsParams.set('distillation_status', distillationFilter)
+      if (platformFilter !== 'all') recordsParams.set('platform', platformFilter)
+      if (categoryFilter !== 'all') recordsParams.set('category', categoryFilter)
 
       const [installationsResponse, recordsResponse] = await Promise.all([
-        fetch(`${API_BASE}/installations?skip=${installationsSkip}&limit=${INSTALLATIONS_PAGE_SIZE}`),
-        fetch(`${API_BASE}/records?skip=${recordsSkip}&limit=${RECORDS_PAGE_SIZE}&include_payload=true`),
+        fetch(`${API_BASE}/installations?${installationsParams.toString()}`),
+        fetch(`${API_BASE}/records?${recordsParams.toString()}`),
       ])
 
       if (!installationsResponse.ok || !recordsResponse.ok) {
@@ -173,8 +205,8 @@ export function App() {
         recordsResponse.json() as Promise<PaginatedRecordsResponse>,
       ])
 
-      setInstallations((prev) => (installationsPage === 1 ? installationsJson.installations : [...prev, ...installationsJson.installations]))
-      setRecords((prev) => (recordsPage === 1 ? recordsJson.records : [...prev, ...recordsJson.records]))
+      setInstallations(installationsJson.installations)
+      setRecords(recordsJson.records)
       setTotalInstallationsCount(installationsJson.total_count)
       setTotalRecordsCount(recordsJson.total_count)
 
@@ -247,58 +279,8 @@ export function App() {
     }
   }, [totalInstallationsCount, totalRecordsCount, records])
 
-  const filteredInstallations = useMemo(() => {
-    const query = installationQuery.trim().toLowerCase()
-    return installations.filter((installation) => {
-      if (!query) return true
-      return (
-        installation.installation_id.toLowerCase().includes(query) ||
-        (installation.platform ?? '').toLowerCase().includes(query) ||
-        (installation.app_version ?? '').toLowerCase().includes(query)
-      )
-    })
-  }, [installationQuery, installations])
-
-  const filteredRecords = useMemo(() => {
-    const query = recordQuery.trim().toLowerCase()
-    return records.filter((record) => {
-      if (routeFilter !== 'all' && record.route_type !== routeFilter) return false
-      if (platformFilter !== 'all' && (record.platform ?? 'Unknown') !== platformFilter) return false
-      if (categoryFilter !== 'all' && (record.payload?.input?.category_english ?? 'Unknown') !== categoryFilter) return false
-
-      const normalizedStatus = normalizeStatus(record.overall_status)
-      if (statusFilter !== 'all' && normalizedStatus !== statusFilter) return false
-      if (distillationFilter !== 'all' && record.distillation_status !== distillationFilter) return false
-
-      if (trainingFilter === 'usable' && !record.usable_for_training) return false
-      if (trainingFilter === 'excluded' && record.usable_for_training) return false
-
-      if (!query) return true
-
-      const productName = record.payload?.input?.product_name_original ?? ''
-      const brand = record.payload?.input?.brand_original ?? ''
-      const category = record.payload?.input?.category_english ?? ''
-
-      return [
-        record.id.toString(),
-        record.installation_id,
-        record.route_type ?? '',
-        record.platform ?? '',
-        record.overall_status ?? '',
-        productName,
-        brand,
-        category,
-      ].some((value) => value.toLowerCase().includes(query))
-    })
-  }, [recordQuery, records, routeFilter, platformFilter, categoryFilter, statusFilter, trainingFilter, distillationFilter])
-
-  const paginatedInstallations = useMemo(() => {
-    return filteredInstallations
-  }, [filteredInstallations])
-
-  const paginatedRecords = useMemo(() => {
-    return filteredRecords
-  }, [filteredRecords])
+  const filteredInstallations = installations
+  const filteredRecords = records
 
   useEffect(() => {
     setInstallationsPage(1)
@@ -358,7 +340,7 @@ export function App() {
 
   const pipelineStages = useMemo(
     () => [
-      { key: 'pending_review' as const, label: 'Pending review', count: overview.pendingReviewRecords },
+      { key: 'pending_review' as const, label: 'Needs review', count: overview.pendingReviewRecords },
       { key: 'approved_for_distillation' as const, label: 'Ready to export', count: overview.approvedForDistillationRecords },
       { key: 'excluded' as const, label: 'Excluded', count: overview.excludedForDistillationRecords },
       { key: 'exported' as const, label: 'Exported', count: overview.exportedRecords },
@@ -368,26 +350,29 @@ export function App() {
     [overview],
   )
 
-  // Keyboard navigation support - press Shift+I to load more installations, Shift+R for records
+  const installationTotalPages = Math.max(1, Math.ceil(totalInstallationsCount / INSTALLATIONS_PAGE_SIZE))
+  const recordTotalPages = Math.max(1, Math.ceil(totalRecordsCount / RECORDS_PAGE_SIZE))
+  const currentInstallationStart = totalInstallationsCount === 0 ? 0 : (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE + 1
+  const currentInstallationEnd = totalInstallationsCount === 0 ? 0 : currentInstallationStart + installations.length - 1
+  const currentRecordStart = totalRecordsCount === 0 ? 0 : (recordsPage - 1) * RECORDS_PAGE_SIZE + 1
+  const currentRecordEnd = totalRecordsCount === 0 ? 0 : currentRecordStart + records.length - 1
+
+  // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.shiftKey && event.key === 'I') {
         event.preventDefault()
-        if (filteredInstallations.length > paginatedInstallations.length && !loadingMore) {
-          setInstallationsPage((page) => page + 1)
-        }
+        setInstallationsPage((page) => Math.min(installationTotalPages, page + 1))
       }
       if (event.shiftKey && event.key === 'R') {
         event.preventDefault()
-        if (filteredRecords.length > paginatedRecords.length && !loadingMore) {
-          setRecordsPage((page) => page + 1)
-        }
+        setRecordsPage((page) => Math.min(recordTotalPages, page + 1))
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredInstallations, filteredRecords, paginatedInstallations, paginatedRecords, loadingMore])
+  }, [installationTotalPages, recordTotalPages])
 
   async function toggleTrainingEligibility(record: RecordSummary) {
     setUpdatingRecordId(record.id)
@@ -577,11 +562,6 @@ export function App() {
     (value) => value !== 'all',
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
 
-  const installationsLoaded = installations.length
-  const recordsLoaded = records.length
-  const installationsHasMore = installationsLoaded < totalInstallationsCount
-  const recordsHasMore = recordsLoaded < totalRecordsCount
-
   return (
     <main style={styles.page}>
       <section style={styles.hero}>
@@ -734,30 +714,39 @@ export function App() {
           />
 
           <div style={styles.installationList}>
-            {paginatedInstallations.map((item) => (
+            {filteredInstallations.map((item) => (
               <InstallationListItem
                 key={item.installation_id}
                 installation={item}
                 recordCount={installationCounts[item.installation_id] ?? 0}
               />
             ))}
-            {paginatedInstallations.length === 0 ? (
+            {filteredInstallations.length === 0 ? (
               <p style={styles.emptyPanelText}>No installations match the current search.</p>
             ) : null}
-            {filteredInstallations.length > paginatedInstallations.length ? (
+          </div>
+          <div style={styles.paginationBar}>
+            <span style={styles.paginationMeta}>
+              Page {installationsPage} of {installationTotalPages} · Showing {currentInstallationStart}-{currentInstallationEnd} of {totalInstallationsCount}
+            </span>
+            <div style={styles.paginationControls}>
               <button
                 type="button"
-                style={{
-                  ...styles.actionButton,
-                  ...(loadingMore ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
-                }}
-                onClick={() => setInstallationsPage((page) => page + 1)}
-                disabled={loadingMore}
-                title="Load more installations (or press Shift+I)"
+                style={styles.actionButton}
+                onClick={() => setInstallationsPage((page) => Math.max(1, page - 1))}
+                disabled={installationsPage === 1 || loadingMore}
               >
-                {loadingMore ? '⟳ Loading...' : `⇓ Load more (${installationsLoaded} / ${totalInstallationsCount})`}
+                Previous
               </button>
-            ) : null}
+              <button
+                type="button"
+                style={styles.actionButton}
+                onClick={() => setInstallationsPage((page) => Math.min(installationTotalPages, page + 1))}
+                disabled={installationsPage >= installationTotalPages || loadingMore}
+              >
+                Next
+              </button>
+            </div>
           </div>
         </article>
 
@@ -826,6 +815,12 @@ export function App() {
                   ))}
                 </select>
               </div>
+              <div style={styles.bulkActionsHeader}>
+                <div>
+                  <h3 style={styles.bulkActionsTitle}>Bulk actions</h3>
+                  <p style={styles.bulkActionsSubtitle}>These actions apply to the records visible in the current list.</p>
+                </div>
+              </div>
               <div style={styles.bulkActionsRow}>
                 <button
                   type="button"
@@ -856,7 +851,7 @@ export function App() {
 
             <div style={styles.recordsPanel}>
               <div style={styles.recordList}>
-                {paginatedRecords.map((item) => (
+                {filteredRecords.map((item) => (
                   <RecordListCard
                     key={item.id}
                     record={item}
@@ -869,26 +864,35 @@ export function App() {
                     onDelete={() => void deleteRecord(item.id)}
                   />
                 ))}
-                {paginatedRecords.length === 0 ? (
+                {filteredRecords.length === 0 ? (
                   <div style={styles.emptyStateCard}>
                     <h3 style={styles.emptyStateTitle}>No records match the current filters</h3>
                     <p style={styles.emptyPanelText}>Widen the search or reset one of the active filter controls.</p>
                   </div>
                 ) : null}
-                {filteredRecords.length > paginatedRecords.length ? (
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.actionButton,
-                      ...(loadingMore ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
-                    }}
-                    onClick={() => setRecordsPage((page) => page + 1)}
-                    disabled={loadingMore}
-                    title="Load more records (or press Shift+R)"
-                  >
-                    {loadingMore ? '⟳ Loading...' : `⇓ Load more (${recordsLoaded} / ${totalRecordsCount})`}
-                  </button>
-                ) : null}
+              </div>
+            </div>
+            <div style={styles.paginationBar}>
+              <span style={styles.paginationMeta}>
+                Page {recordsPage} of {recordTotalPages} · Showing {currentRecordStart}-{currentRecordEnd} of {totalRecordsCount}
+              </span>
+              <div style={styles.paginationControls}>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => setRecordsPage((page) => Math.max(1, page - 1))}
+                  disabled={recordsPage === 1 || loadingMore}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => setRecordsPage((page) => Math.min(recordTotalPages, page + 1))}
+                  disabled={recordsPage >= recordTotalPages || loadingMore}
+                >
+                  Next
+                </button>
               </div>
             </div>
 
@@ -950,7 +954,7 @@ export function App() {
                       <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
                     </DetailSection>
 
-                    <DetailSection title="Distillation Actions" fullWidth>
+                    <DetailSection title="Record actions" fullWidth>
                       <div style={styles.detailActionRow}>
                         <button
                           type="button"
@@ -1846,6 +1850,22 @@ const styles: Record<string, CSSProperties> = {
     gap: '10px',
     flexWrap: 'wrap',
   },
+  bulkActionsHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '12px',
+  },
+  bulkActionsTitle: {
+    margin: 0,
+    fontSize: '16px',
+  },
+  bulkActionsSubtitle: {
+    margin: '4px 0 0',
+    color: '#6d8174',
+    fontSize: '13px',
+    lineHeight: 1.4,
+  },
   installationList: {
     display: 'flex',
     flexDirection: 'column',
@@ -2164,6 +2184,26 @@ const styles: Record<string, CSSProperties> = {
   detailActionRow: {
     display: 'flex',
     gap: '10px',
+    flexWrap: 'wrap',
+  },
+  paginationBar: {
+    marginTop: '14px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap',
+    borderTop: '1px solid #e1ebe4',
+    paddingTop: '14px',
+  },
+  paginationMeta: {
+    color: '#667a6d',
+    fontSize: '13px',
+    fontWeight: 600,
+  },
+  paginationControls: {
+    display: 'flex',
+    gap: '8px',
     flexWrap: 'wrap',
   },
   detailRow: {
