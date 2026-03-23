@@ -47,6 +47,31 @@ type DistillationBatchListResponse = {
   has_more: boolean
 }
 
+type DistillationJob = {
+  id: number
+  batch_id: string
+  base_model: string
+  task_type: string
+  dataset_mode: string
+  status: string
+  progress_stage: string
+  train_record_count: number | null
+  validation_record_count: number | null
+  metrics_json: Record<string, unknown> | null
+  error_message: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+type DistillationJobListResponse = {
+  jobs: DistillationJob[]
+  total_count: number
+  skip: number
+  limit: number
+  has_more: boolean
+}
+
 type RecordPayload = {
   schema_version?: number
   created_at_epoch_ms?: number
@@ -144,6 +169,7 @@ export function App() {
   const [installations, setInstallations] = useState<Installation[]>([])
   const [records, setRecords] = useState<RecordSummary[]>([])
   const [exportBatches, setExportBatches] = useState<DistillationBatch[]>([])
+  const [distillationJobs, setDistillationJobs] = useState<DistillationJob[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
@@ -164,17 +190,21 @@ export function App() {
   const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
+  const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
   const BATCHES_PAGE_SIZE = 12
+  const JOBS_PAGE_SIZE = 8
   
   const [installationsPage, setInstallationsPage] = useState(1)
   const [recordsPage, setRecordsPage] = useState(1)
   const [batchesPage, setBatchesPage] = useState(1)
+  const [jobsPage, setJobsPage] = useState(1)
   const [totalInstallationsCount, setTotalInstallationsCount] = useState(0)
   const [totalRecordsCount, setTotalRecordsCount] = useState(0)
   const [totalBatchCount, setTotalBatchCount] = useState(0)
+  const [totalJobCount, setTotalJobCount] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
@@ -193,6 +223,7 @@ export function App() {
     batchesPage,
     batchQuery,
     batchStatusFilter,
+    jobsPage,
   ])
 
   async function loadDashboard() {
@@ -204,6 +235,7 @@ export function App() {
       const installationsSkip = (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE
       const recordsSkip = (recordsPage - 1) * RECORDS_PAGE_SIZE
       const batchesSkip = (batchesPage - 1) * BATCHES_PAGE_SIZE
+      const jobsSkip = (jobsPage - 1) * JOBS_PAGE_SIZE
       const installationsParams = new URLSearchParams({
         skip: String(installationsSkip),
         limit: String(INSTALLATIONS_PAGE_SIZE),
@@ -233,28 +265,37 @@ export function App() {
       if (batchQuery.trim()) batchesParams.set('query', batchQuery.trim())
       if (batchStatusFilter !== 'all') batchesParams.set('status', batchStatusFilter)
 
-      const [installationsResponse, recordsResponse, exportBatchesResponse] = await Promise.all([
+      const jobsParams = new URLSearchParams({
+        skip: String(jobsSkip),
+        limit: String(JOBS_PAGE_SIZE),
+      })
+
+      const [installationsResponse, recordsResponse, exportBatchesResponse, distillationJobsResponse] = await Promise.all([
         fetch(`${API_BASE}/installations?${installationsParams.toString()}`),
         fetch(`${API_BASE}/records?${recordsParams.toString()}`),
         fetch(`${API_BASE}/records/export-batches?${batchesParams.toString()}`),
+        fetch(`${API_BASE}/distillation-jobs?${jobsParams.toString()}`),
       ])
 
-      if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok) {
+      if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok || !distillationJobsResponse.ok) {
         throw new Error('Failed to load dashboard data from backend')
       }
 
-      const [installationsJson, recordsJson, exportBatchesJson] = await Promise.all([
+      const [installationsJson, recordsJson, exportBatchesJson, distillationJobsJson] = await Promise.all([
         installationsResponse.json() as Promise<PaginatedInstallationsResponse>,
         recordsResponse.json() as Promise<PaginatedRecordsResponse>,
         exportBatchesResponse.json() as Promise<DistillationBatchListResponse>,
+        distillationJobsResponse.json() as Promise<DistillationJobListResponse>,
       ])
 
       setInstallations(installationsJson.installations)
       setRecords(recordsJson.records)
       setExportBatches(exportBatchesJson.batches)
+      setDistillationJobs(distillationJobsJson.jobs)
       setTotalInstallationsCount(installationsJson.total_count)
       setTotalRecordsCount(recordsJson.total_count)
       setTotalBatchCount(exportBatchesJson.total_count)
+      setTotalJobCount(distillationJobsJson.total_count)
 
       if (selectedRecordId != null && !recordsJson.records.some((record) => record.id === selectedRecordId)) {
         setSelectedRecordId(null)
@@ -403,12 +444,15 @@ export function App() {
   const installationTotalPages = Math.max(1, Math.ceil(totalInstallationsCount / INSTALLATIONS_PAGE_SIZE))
   const recordTotalPages = Math.max(1, Math.ceil(totalRecordsCount / RECORDS_PAGE_SIZE))
   const batchTotalPages = Math.max(1, Math.ceil(totalBatchCount / BATCHES_PAGE_SIZE))
+  const jobTotalPages = Math.max(1, Math.ceil(totalJobCount / JOBS_PAGE_SIZE))
   const currentInstallationStart = totalInstallationsCount === 0 ? 0 : (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE + 1
   const currentInstallationEnd = totalInstallationsCount === 0 ? 0 : currentInstallationStart + installations.length - 1
   const currentRecordStart = totalRecordsCount === 0 ? 0 : (recordsPage - 1) * RECORDS_PAGE_SIZE + 1
   const currentRecordEnd = totalRecordsCount === 0 ? 0 : currentRecordStart + records.length - 1
   const currentBatchStart = totalBatchCount === 0 ? 0 : (batchesPage - 1) * BATCHES_PAGE_SIZE + 1
   const currentBatchEnd = totalBatchCount === 0 ? 0 : currentBatchStart + exportBatches.length - 1
+  const currentJobStart = totalJobCount === 0 ? 0 : (jobsPage - 1) * JOBS_PAGE_SIZE + 1
+  const currentJobEnd = totalJobCount === 0 ? 0 : currentJobStart + distillationJobs.length - 1
 
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
@@ -609,6 +653,34 @@ export function App() {
       setError(err instanceof Error ? err.message : 'Failed to delete record')
     } finally {
       setDeletingRecordId(null)
+    }
+  }
+
+  async function createDistillationJob(batchId: string) {
+    setCreatingJobBatchId(batchId)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/distillation-jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_id: batchId,
+          base_model: '3B hosted SLM',
+          task_type: 'overall_status_classification',
+          dataset_mode: 'single_batch',
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail ?? 'Failed to create distillation job')
+      }
+
+      await loadDashboard()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create distillation job')
+    } finally {
+      setCreatingJobBatchId(null)
     }
   }
 
@@ -917,6 +989,71 @@ export function App() {
       <section style={styles.pipelinePanel}>
         <div style={styles.pipelinePanelHeader}>
           <div>
+            <h2 style={styles.cardTitle}>Distillation Jobs</h2>
+            <p style={styles.cardSubtitle}>
+              Jobs represent SLM training attempts created from exported batches. This is the execution layer between export and future model versions.
+            </p>
+          </div>
+          <span style={styles.batchBadge}>{totalJobCount} jobs</span>
+        </div>
+        {distillationJobs.length > 0 ? (
+          <>
+            <div style={styles.batchGrid}>
+              {distillationJobs.map((job) => (
+                <article key={job.id} style={styles.batchCard}>
+                  <div style={styles.batchCardTop}>
+                    <div>
+                      <p style={styles.factLabel}>Job #{job.id}</p>
+                      <h3 style={styles.batchCardTitle}>{job.base_model}</h3>
+                    </div>
+                    <span style={job.status === 'queued' ? styles.batchReadyPill : styles.batchUsedPill}>
+                      {job.status}
+                    </span>
+                  </div>
+                  <div style={styles.batchMetaList}>
+                    <span>Batch {job.batch_id}</span>
+                    <span>Task {job.task_type}</span>
+                    <span>Mode {job.dataset_mode}</span>
+                    <span>Created {formatDateTime(job.created_at)}</span>
+                  </div>
+                  <div style={styles.batchStatusRow}>
+                    <span style={styles.miniStatusMuted}>Train {job.train_record_count ?? 0}</span>
+                    <span style={styles.miniStatusMuted}>Validation {job.validation_record_count ?? 0}</span>
+                  </div>
+                  <div style={styles.batchFooter}>
+                    <span style={styles.batchFooterText}>
+                      {job.progress_stage}
+                      {job.error_message ? ` · ${job.error_message}` : ''}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div style={styles.paginationBar}>
+              <span style={styles.paginationMeta}>
+                Page {jobsPage} of {jobTotalPages} · Showing {currentJobStart}-{currentJobEnd} of {totalJobCount}
+              </span>
+              <div style={styles.paginationControls}>
+                <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.max(1, page - 1))} disabled={jobsPage === 1 || loadingMore}>
+                  Previous
+                </button>
+                <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.min(jobTotalPages, page + 1))} disabled={jobsPage >= jobTotalPages || loadingMore}>
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div style={styles.emptyStateCard}>
+            <h3 style={styles.emptyStateTitle}>No distillation jobs yet</h3>
+            <p style={styles.emptyPanelText}>Create a job from a ready export batch to start the SLM pipeline.</p>
+          </div>
+        )}
+      </section>
+
+      <section style={styles.pipelinePanel}>
+        <div style={styles.pipelinePanelHeader}>
+          <div>
             <h2 style={styles.cardTitle}>Export Batches</h2>
             <p style={styles.cardSubtitle}>
               Exported record groups become the handoff point into SLM distillation. Batches marked ready can be used by the future training worker.
@@ -968,8 +1105,13 @@ export function App() {
                         ? 'This batch is exported and ready for the upcoming distillation job flow.'
                         : 'This batch has already been used in a training workflow and remains stored for traceability.'}
                     </span>
-                    <button type="button" style={styles.actionButton} disabled>
-                      Distillation pipeline next
+                    <button
+                      type="button"
+                      style={styles.actionButton}
+                      disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
+                      onClick={() => void createDistillationJob(batch.batch_id)}
+                    >
+                      {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
                     </button>
                   </div>
                 </article>
