@@ -58,6 +58,8 @@ type DistillationJob = {
   train_record_count: number | null
   validation_record_count: number | null
   metrics_json: Record<string, unknown> | null
+  logs_json: Array<{ timestamp: string; message: string }> | null
+  artifact_uri: string | null
   error_message: string | null
   progress_percent: number
   created_at: string
@@ -1329,10 +1331,22 @@ export function App() {
                       {job.error_message ? ` · ${job.error_message}` : ''}
                     </span>
                   </div>
+                  {job.logs_json && job.logs_json.length > 0 ? (
+                    <div style={styles.jobMetricsBox}>
+                      <span style={styles.jobMetricsTitle}>Worker log</span>
+                      <span style={styles.jobMetricsText}>{job.logs_json[job.logs_json.length - 1]?.message}</span>
+                    </div>
+                  ) : null}
                   {job.metrics_json && job.status === 'completed' ? (
                     <div style={styles.jobMetricsBox}>
-                      <span style={styles.jobMetricsTitle}>Simulated evaluation</span>
+                      <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
                       <span style={styles.jobMetricsText}>{JSON.stringify(job.metrics_json)}</span>
+                    </div>
+                  ) : null}
+                  {job.artifact_uri ? (
+                    <div style={styles.jobMetricsBox}>
+                      <span style={styles.jobMetricsTitle}>Artifact</span>
+                      <span style={styles.jobMetricsText}>{job.artifact_uri}</span>
                     </div>
                   ) : null}
                 </article>
