@@ -59,6 +59,7 @@ type DistillationJob = {
   validation_record_count: number | null
   metrics_json: Record<string, unknown> | null
   error_message: string | null
+  progress_percent: number
   created_at: string
   started_at: string | null
   finished_at: string | null
@@ -225,6 +226,18 @@ export function App() {
     batchStatusFilter,
     jobsPage,
   ])
+
+  useEffect(() => {
+    if (selectedRecordId != null) return
+    const hasActiveJobs = distillationJobs.some((job) => ['queued', 'preparing_dataset', 'training', 'evaluating'].includes(job.status))
+    if (!hasActiveJobs) return
+
+    const interval = window.setInterval(() => {
+      void loadDashboard()
+    }, 4000)
+
+    return () => window.clearInterval(interval)
+  }, [distillationJobs, selectedRecordId])
 
   async function loadDashboard() {
     const isInitialLoad = installationsPage === 1 && recordsPage === 1
@@ -1016,6 +1029,15 @@ export function App() {
                     <span>Mode {job.dataset_mode}</span>
                     <span>Created {formatDateTime(job.created_at)}</span>
                   </div>
+                  <div style={styles.jobProgressShell}>
+                    <div style={styles.jobProgressTop}>
+                      <span style={styles.factLabel}>Pipeline progress</span>
+                      <strong style={styles.inlineMetaStrong}>{job.progress_percent}%</strong>
+                    </div>
+                    <div style={styles.progressTrack}>
+                      <div style={{ ...styles.progressFill, width: `${job.progress_percent}%` }} />
+                    </div>
+                  </div>
                   <div style={styles.batchStatusRow}>
                     <span style={styles.miniStatusMuted}>Train {job.train_record_count ?? 0}</span>
                     <span style={styles.miniStatusMuted}>Validation {job.validation_record_count ?? 0}</span>
@@ -1026,6 +1048,12 @@ export function App() {
                       {job.error_message ? ` · ${job.error_message}` : ''}
                     </span>
                   </div>
+                  {job.metrics_json && job.status === 'completed' ? (
+                    <div style={styles.jobMetricsBox}>
+                      <span style={styles.jobMetricsTitle}>Simulated evaluation</span>
+                      <span style={styles.jobMetricsText}>{JSON.stringify(job.metrics_json)}</span>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -2166,6 +2194,17 @@ const styles: Record<string, CSSProperties> = {
     gap: '8px',
     flexWrap: 'wrap',
   },
+  jobProgressShell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  jobProgressTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'center',
+  },
   batchReadyPill: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -2238,6 +2277,28 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.5,
     flex: 1,
+  },
+  jobMetricsBox: {
+    borderRadius: '14px',
+    border: '1px solid #e1ebe4',
+    background: '#f6faf7',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  jobMetricsTitle: {
+    fontSize: '12px',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: '#71867a',
+    fontWeight: 800,
+  },
+  jobMetricsText: {
+    fontSize: '12px',
+    lineHeight: 1.5,
+    color: '#244032',
+    wordBreak: 'break-word',
   },
   analyticsStrip: {
     display: 'grid',
