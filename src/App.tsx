@@ -24,6 +24,26 @@ type PaginatedInstallationsResponse = {
   has_more: boolean
 }
 
+type DistillationBatch = {
+  batch_id: string
+  exported_count: number
+  safe_count: number
+  warning_count: number
+  unsafe_count: number
+  cannot_assess_count: number
+  unknown_count: number
+  exported_at: string | null
+  last_used_in_training_at: string | null
+  latest_record_at: string | null
+  status: 'ready_for_training' | 'used_in_training'
+  ready_for_training: boolean
+}
+
+type DistillationBatchListResponse = {
+  batches: DistillationBatch[]
+  total_count: number
+}
+
 type RecordPayload = {
   schema_version?: number
   created_at_epoch_ms?: number
@@ -120,6 +140,7 @@ function SkeletonCard() {
 export function App() {
   const [installations, setInstallations] = useState<Installation[]>([])
   const [records, setRecords] = useState<RecordSummary[]>([])
+  const [exportBatches, setExportBatches] = useState<DistillationBatch[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
@@ -137,6 +158,7 @@ export function App() {
   const [exporting, setExporting] = useState(false)
   const [lastExportBatchId, setLastExportBatchId] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
+  const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -192,22 +214,25 @@ export function App() {
       if (platformFilter !== 'all') recordsParams.set('platform', platformFilter)
       if (categoryFilter !== 'all') recordsParams.set('category', categoryFilter)
 
-      const [installationsResponse, recordsResponse] = await Promise.all([
+      const [installationsResponse, recordsResponse, exportBatchesResponse] = await Promise.all([
         fetch(`${API_BASE}/installations?${installationsParams.toString()}`),
         fetch(`${API_BASE}/records?${recordsParams.toString()}`),
+        fetch(`${API_BASE}/records/export-batches`),
       ])
 
-      if (!installationsResponse.ok || !recordsResponse.ok) {
+      if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok) {
         throw new Error('Failed to load dashboard data from backend')
       }
 
-      const [installationsJson, recordsJson] = await Promise.all([
+      const [installationsJson, recordsJson, exportBatchesJson] = await Promise.all([
         installationsResponse.json() as Promise<PaginatedInstallationsResponse>,
         recordsResponse.json() as Promise<PaginatedRecordsResponse>,
+        exportBatchesResponse.json() as Promise<DistillationBatchListResponse>,
       ])
 
       setInstallations(installationsJson.installations)
       setRecords(recordsJson.records)
+      setExportBatches(exportBatchesJson.batches)
       setTotalInstallationsCount(installationsJson.total_count)
       setTotalRecordsCount(recordsJson.total_count)
 
@@ -527,6 +552,7 @@ export function App() {
             : item,
         ),
       )
+      await loadDashboard()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to export records')
     } finally {
@@ -638,16 +664,38 @@ export function App() {
             </div>
           </section>
 
-          <section style={styles.detailPageGrid}>
-            <div style={styles.detailMainColumn}>
-              <DetailSection title="Overview" fullWidth>
-                <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
-                <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
-                <DetailRow label="Reviewed at" value={selectedRecord.reviewed_at ? formatDateTime(selectedRecord.reviewed_at) : 'Not reviewed yet'} />
-                <DetailRow label="Exported at" value={selectedRecord.exported_at ? formatDateTime(selectedRecord.exported_at) : 'Not exported yet'} />
-                <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
-              </DetailSection>
+          <div style={styles.detailTabRow}>
+            <DetailTabButton label="Overview" active={activeDetailTab === 'overview'} onClick={() => setActiveDetailTab('overview')} />
+            <DetailTabButton label="Teacher Output" active={activeDetailTab === 'teacher'} onClick={() => setActiveDetailTab('teacher')} />
+            <DetailTabButton label="Input Data" active={activeDetailTab === 'input'} onClick={() => setActiveDetailTab('input')} />
+            <DetailTabButton label="Distillation" active={activeDetailTab === 'distillation'} onClick={() => setActiveDetailTab('distillation')} />
+            <DetailTabButton label="Developer" active={activeDetailTab === 'developer'} onClick={() => setActiveDetailTab('developer')} />
+          </div>
 
+          {activeDetailTab === 'overview' ? (
+            <section style={styles.detailPageGrid}>
+              <div style={styles.detailMainColumn}>
+                <DetailSection title="Overview" fullWidth>
+                  <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
+                  <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
+                  <DetailRow label="Reviewed at" value={selectedRecord.reviewed_at ? formatDateTime(selectedRecord.reviewed_at) : 'Not reviewed yet'} />
+                  <DetailRow label="Exported at" value={selectedRecord.exported_at ? formatDateTime(selectedRecord.exported_at) : 'Not exported yet'} />
+                  <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
+                </DetailSection>
+              </div>
+              <div style={styles.detailSideColumn}>
+                <DetailSection title="Distillation Summary" fullWidth>
+                  <DetailRow label="Ready for export" value={selectedRecord.distillation_status === 'approved_for_distillation' ? 'Yes' : 'No'} />
+                  <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not assigned yet'} />
+                  <DetailRow label="Used in training at" value={selectedRecord.used_in_training_at ? formatDateTime(selectedRecord.used_in_training_at) : 'Not used yet'} />
+                  <DetailRow label="Excluded reason" value={selectedRecord.excluded_reason ?? 'No exclusion reason recorded'} multiline />
+                </DetailSection>
+              </div>
+            </section>
+          ) : null}
+
+          {activeDetailTab === 'teacher' ? (
+            <section style={styles.detailTabContent}>
               <DetailSection title="Teacher Output" fullWidth>
                 <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'unknown')} />
                 <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'No decision summary provided'} multiline />
@@ -655,7 +703,11 @@ export function App() {
                 <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
                 <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
               </DetailSection>
+            </section>
+          ) : null}
 
+          {activeDetailTab === 'input' ? (
+            <section style={styles.detailTabContent}>
               <DetailSection title="Input Data" fullWidth>
                 <DetailRow label="Product" value={selectedRecord.payload?.input?.product_name_original ?? 'Not provided'} />
                 <DetailRow label="Brand" value={selectedRecord.payload?.input?.brand_original ?? 'Not provided'} />
@@ -666,50 +718,62 @@ export function App() {
                 <DetailRow label="Additives" value={joinList(selectedRecord.payload?.input?.additives_english)} multiline />
                 <DetailRow label="Allergens" value={joinList(selectedRecord.payload?.input?.allergens_english)} multiline />
               </DetailSection>
-            </div>
+            </section>
+          ) : null}
 
-            <div style={styles.detailSideColumn}>
+          {activeDetailTab === 'distillation' ? (
+            <section style={styles.detailTabContent}>
               <DetailSection title="Distillation" fullWidth>
+                <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
+                <DetailRow label="Reviewed at" value={selectedRecord.reviewed_at ? formatDateTime(selectedRecord.reviewed_at) : 'Not reviewed yet'} />
+                <DetailRow label="Exported at" value={selectedRecord.exported_at ? formatDateTime(selectedRecord.exported_at) : 'Not exported yet'} />
                 <DetailRow label="Ready for export" value={selectedRecord.distillation_status === 'approved_for_distillation' ? 'Yes' : 'No'} />
                 <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not assigned yet'} />
                 <DetailRow label="Used in training at" value={selectedRecord.used_in_training_at ? formatDateTime(selectedRecord.used_in_training_at) : 'Not used yet'} />
                 <DetailRow label="Excluded reason" value={selectedRecord.excluded_reason ?? 'No exclusion reason recorded'} multiline />
               </DetailSection>
+            </section>
+          ) : null}
 
-              <DetailSection title="Developer" fullWidth>
-                <DetailRow label="Payload schema version" value={selectedRecord.payload?.schema_version == null ? 'Not available' : String(selectedRecord.payload.schema_version)} />
-                <DetailRow label="Recorded at epoch ms" value={selectedRecord.payload?.created_at_epoch_ms == null ? 'Not available' : String(selectedRecord.payload.created_at_epoch_ms)} />
-                <DetailRow label="Preference keys" value={Object.keys(selectedRecord.payload?.preferences ?? {}).join(', ') || 'No preference payload recorded'} multiline />
-                <DetailRow label="Metadata fields" value={Object.keys(selectedRecord.payload?.metadata ?? {}).join(', ') || 'No metadata fields recorded'} multiline />
-              </DetailSection>
+          {activeDetailTab === 'developer' ? (
+            <section style={styles.detailPageGrid}>
+              <div style={styles.detailMainColumn}>
+                <DetailSection title="Distillation Export Preview" fullWidth>
+                  <p style={styles.previewSectionNote}>
+                    Only the fields intended for SLM distillation are included here. Full payload metadata and transport details are excluded.
+                  </p>
+                  <pre style={styles.previewJsonBlock}>{JSON.stringify(distillationPreview, null, 2)}</pre>
+                </DetailSection>
 
-              <DetailSection title="Payload Preview" fullWidth>
-                <div style={styles.payloadPreviewGrid}>
-                  <PayloadPreviewCard title="Input block" value={`${Object.keys(selectedRecord.payload?.input ?? {}).length} fields`} subtitle="Product, brand, category, ingredients, origin, barcode." />
-                  <PayloadPreviewCard title="Teacher block" value={`${Object.keys(selectedRecord.payload?.teacher_result ?? {}).length} fields`} subtitle="Status, decision line, and executed evaluations." />
-                  <PayloadPreviewCard title="Metadata block" value={`${Object.keys(selectedRecord.payload?.metadata ?? {}).length} fields`} subtitle="Training eligibility, excluded domains, market, and distillation fields." />
-                  <PayloadPreviewCard title="Preferences block" value={`${Object.keys(selectedRecord.payload?.preferences ?? {}).length} keys`} subtitle="Preference payload passed from the app when available." />
-                </div>
-              </DetailSection>
+                <DetailSection title="Raw JSON" fullWidth>
+                  <div style={styles.rawJsonHeader}>
+                    <p style={styles.bulkActionsSubtitle}>Keep this collapsed for normal review. Open it only for debugging or schema inspection.</p>
+                    <button type="button" style={styles.actionButton} onClick={() => setShowRawJson((current) => !current)}>
+                      {showRawJson ? 'Hide raw JSON' : 'Show raw JSON'}
+                    </button>
+                  </div>
+                  {showRawJson ? <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre> : null}
+                </DetailSection>
+              </div>
+              <div style={styles.detailSideColumn}>
+                <DetailSection title="Developer" fullWidth>
+                  <DetailRow label="Payload schema version" value={selectedRecord.payload?.schema_version == null ? 'Not available' : String(selectedRecord.payload.schema_version)} />
+                  <DetailRow label="Recorded at epoch ms" value={selectedRecord.payload?.created_at_epoch_ms == null ? 'Not available' : String(selectedRecord.payload.created_at_epoch_ms)} />
+                  <DetailRow label="Preference keys" value={Object.keys(selectedRecord.payload?.preferences ?? {}).join(', ') || 'No preference payload recorded'} multiline />
+                  <DetailRow label="Metadata fields" value={Object.keys(selectedRecord.payload?.metadata ?? {}).join(', ') || 'No metadata fields recorded'} multiline />
+                </DetailSection>
 
-              <DetailSection title="Raw JSON" fullWidth>
-                <div style={styles.rawJsonHeader}>
-                  <p style={styles.bulkActionsSubtitle}>Keep this collapsed for normal review. Open it only for debugging or schema inspection.</p>
-                  <button type="button" style={styles.actionButton} onClick={() => setShowRawJson((current) => !current)}>
-                    {showRawJson ? 'Hide raw JSON' : 'Show raw JSON'}
-                  </button>
-                </div>
-                {showRawJson ? <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre> : null}
-              </DetailSection>
-
-              <DetailSection title="Distillation Export Preview" fullWidth>
-                <p style={styles.previewSectionNote}>
-                  Only the fields intended for SLM distillation are included here. Full payload metadata and transport details are excluded.
-                </p>
-                <pre style={styles.previewJsonBlock}>{JSON.stringify(distillationPreview, null, 2)}</pre>
-              </DetailSection>
-            </div>
-          </section>
+                <DetailSection title="Payload Preview" fullWidth>
+                  <div style={styles.payloadPreviewGrid}>
+                    <PayloadPreviewCard title="Input block" value={`${Object.keys(selectedRecord.payload?.input ?? {}).length} fields`} subtitle="Product, brand, category, ingredients, origin, barcode." />
+                    <PayloadPreviewCard title="Teacher block" value={`${Object.keys(selectedRecord.payload?.teacher_result ?? {}).length} fields`} subtitle="Status, decision line, and executed evaluations." />
+                    <PayloadPreviewCard title="Metadata block" value={`${Object.keys(selectedRecord.payload?.metadata ?? {}).length} fields`} subtitle="Training eligibility, excluded domains, market, and distillation fields." />
+                    <PayloadPreviewCard title="Preferences block" value={`${Object.keys(selectedRecord.payload?.preferences ?? {}).length} keys`} subtitle="Preference payload passed from the app when available." />
+                  </div>
+                </DetailSection>
+              </div>
+            </section>
+          ) : null}
         </section>
       </main>
     )
@@ -821,6 +885,61 @@ export function App() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section style={styles.pipelinePanel}>
+        <div style={styles.pipelinePanelHeader}>
+          <div>
+            <h2 style={styles.cardTitle}>Export Batches</h2>
+            <p style={styles.cardSubtitle}>
+              Exported record groups become the handoff point into SLM distillation. Batches marked ready can be used by the future training worker.
+            </p>
+          </div>
+          <span style={styles.batchBadge}>{exportBatches.length} batches</span>
+        </div>
+        {exportBatches.length > 0 ? (
+          <div style={styles.batchGrid}>
+            {exportBatches.map((batch) => (
+              <article key={batch.batch_id} style={styles.batchCard}>
+                <div style={styles.batchCardTop}>
+                  <div>
+                    <p style={styles.factLabel}>Batch ID</p>
+                    <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
+                  </div>
+                  <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
+                    {batch.ready_for_training ? 'Ready for SLM training' : 'Used in training'}
+                  </span>
+                </div>
+                <div style={styles.batchMetaList}>
+                  <span>{batch.exported_count} records</span>
+                  <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
+                  <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
+                </div>
+                <div style={styles.batchStatusRow}>
+                  <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
+                  <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
+                  <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
+                  <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
+                </div>
+                <div style={styles.batchFooter}>
+                  <span style={styles.batchFooterText}>
+                    {batch.ready_for_training
+                      ? 'This batch is exported and ready for the upcoming distillation job flow.'
+                      : 'This batch has already been used in a training workflow and remains stored for traceability.'}
+                  </span>
+                  <button type="button" style={styles.actionButton} disabled>
+                    Distillation pipeline next
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div style={styles.emptyStateCard}>
+            <h3 style={styles.emptyStateTitle}>No export batches yet</h3>
+            <p style={styles.emptyPanelText}>Export approved records first. Each export will appear here as a training-ready batch.</p>
+          </div>
+        )}
       </section>
 
       <section style={styles.analyticsStrip}>
@@ -1014,6 +1133,7 @@ export function App() {
                     onSelect={() => {
                       setSelectedRecordId(item.id)
                       setShowRawJson(false)
+                      setActiveDetailTab('overview')
                     }}
                     onApprove={() => void updateDistillationStatus([item.id], 'approved_for_distillation')}
                     onExclude={() => void updateDistillationStatus([item.id], 'excluded', { excludedReason: 'Excluded from record card action' })}
@@ -1100,6 +1220,29 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
       <p style={styles.chartSubtitle}>{subtitle}</p>
       {children}
     </article>
+  )
+}
+
+function DetailTabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      style={{
+        ...styles.detailTabButton,
+        ...(active ? styles.detailTabButtonActive : null),
+      }}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   )
 }
 
@@ -1772,6 +1915,117 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '28px',
     color: '#1f3a2d',
   },
+  batchGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+    gap: '14px',
+  },
+  batchCard: {
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  batchCardTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'flex-start',
+  },
+  batchCardTitle: {
+    margin: '6px 0 0',
+    fontSize: '18px',
+    lineHeight: 1.25,
+    overflowWrap: 'anywhere',
+  },
+  batchMetaList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    color: '#5f7366',
+    fontSize: '13px',
+  },
+  batchStatusRow: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  batchReadyPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '8px 12px',
+    background: '#edf8f0',
+    color: '#24673e',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  batchUsedPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '8px 12px',
+    background: '#eef3ff',
+    color: '#37539a',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStatusSafe: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#e3f6ea',
+    color: '#17633d',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStatusWarning: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#fff2db',
+    color: '#8b5609',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStatusUnsafe: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#ffe3e0',
+    color: '#9c2f2e',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStatusMuted: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#edf1ef',
+    color: '#56695e',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  batchFooter: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  batchFooterText: {
+    color: '#617466',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    flex: 1,
+  },
   analyticsStrip: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
@@ -2336,6 +2590,11 @@ const styles: Record<string, CSSProperties> = {
     border: '1px solid #24553e',
     background: '#173f2d',
     color: '#ffffff',
+  },
+  detailTabContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
   },
   detailScreenBody: {
     padding: '20px 24px 24px',
