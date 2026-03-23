@@ -42,6 +42,9 @@ type DistillationBatch = {
 type DistillationBatchListResponse = {
   batches: DistillationBatch[]
   total_count: number
+  skip: number
+  limit: number
+  has_more: boolean
 }
 
 type RecordPayload = {
@@ -159,14 +162,19 @@ export function App() {
   const [lastExportBatchId, setLastExportBatchId] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
   const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
+  const [batchQuery, setBatchQuery] = useState('')
+  const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
+  const BATCHES_PAGE_SIZE = 12
   
   const [installationsPage, setInstallationsPage] = useState(1)
   const [recordsPage, setRecordsPage] = useState(1)
+  const [batchesPage, setBatchesPage] = useState(1)
   const [totalInstallationsCount, setTotalInstallationsCount] = useState(0)
   const [totalRecordsCount, setTotalRecordsCount] = useState(0)
+  const [totalBatchCount, setTotalBatchCount] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
@@ -182,6 +190,9 @@ export function App() {
     distillationFilter,
     platformFilter,
     categoryFilter,
+    batchesPage,
+    batchQuery,
+    batchStatusFilter,
   ])
 
   async function loadDashboard() {
@@ -192,6 +203,7 @@ export function App() {
     try {
       const installationsSkip = (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE
       const recordsSkip = (recordsPage - 1) * RECORDS_PAGE_SIZE
+      const batchesSkip = (batchesPage - 1) * BATCHES_PAGE_SIZE
       const installationsParams = new URLSearchParams({
         skip: String(installationsSkip),
         limit: String(INSTALLATIONS_PAGE_SIZE),
@@ -214,10 +226,17 @@ export function App() {
       if (platformFilter !== 'all') recordsParams.set('platform', platformFilter)
       if (categoryFilter !== 'all') recordsParams.set('category', categoryFilter)
 
+      const batchesParams = new URLSearchParams({
+        skip: String(batchesSkip),
+        limit: String(BATCHES_PAGE_SIZE),
+      })
+      if (batchQuery.trim()) batchesParams.set('query', batchQuery.trim())
+      if (batchStatusFilter !== 'all') batchesParams.set('status', batchStatusFilter)
+
       const [installationsResponse, recordsResponse, exportBatchesResponse] = await Promise.all([
         fetch(`${API_BASE}/installations?${installationsParams.toString()}`),
         fetch(`${API_BASE}/records?${recordsParams.toString()}`),
-        fetch(`${API_BASE}/records/export-batches`),
+        fetch(`${API_BASE}/records/export-batches?${batchesParams.toString()}`),
       ])
 
       if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok) {
@@ -235,6 +254,7 @@ export function App() {
       setExportBatches(exportBatchesJson.batches)
       setTotalInstallationsCount(installationsJson.total_count)
       setTotalRecordsCount(recordsJson.total_count)
+      setTotalBatchCount(exportBatchesJson.total_count)
 
       if (selectedRecordId != null && !recordsJson.records.some((record) => record.id === selectedRecordId)) {
         setSelectedRecordId(null)
@@ -316,6 +336,10 @@ export function App() {
     setRecordsPage(1)
   }, [recordQuery, routeFilter, statusFilter, trainingFilter, distillationFilter, platformFilter, categoryFilter])
 
+  useEffect(() => {
+    setBatchesPage(1)
+  }, [batchQuery, batchStatusFilter])
+
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) ?? null,
     [records, selectedRecordId],
@@ -378,10 +402,13 @@ export function App() {
 
   const installationTotalPages = Math.max(1, Math.ceil(totalInstallationsCount / INSTALLATIONS_PAGE_SIZE))
   const recordTotalPages = Math.max(1, Math.ceil(totalRecordsCount / RECORDS_PAGE_SIZE))
+  const batchTotalPages = Math.max(1, Math.ceil(totalBatchCount / BATCHES_PAGE_SIZE))
   const currentInstallationStart = totalInstallationsCount === 0 ? 0 : (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE + 1
   const currentInstallationEnd = totalInstallationsCount === 0 ? 0 : currentInstallationStart + installations.length - 1
   const currentRecordStart = totalRecordsCount === 0 ? 0 : (recordsPage - 1) * RECORDS_PAGE_SIZE + 1
   const currentRecordEnd = totalRecordsCount === 0 ? 0 : currentRecordStart + records.length - 1
+  const currentBatchStart = totalBatchCount === 0 ? 0 : (batchesPage - 1) * BATCHES_PAGE_SIZE + 1
+  const currentBatchEnd = totalBatchCount === 0 ? 0 : currentBatchStart + exportBatches.length - 1
 
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
@@ -895,45 +922,83 @@ export function App() {
               Exported record groups become the handoff point into SLM distillation. Batches marked ready can be used by the future training worker.
             </p>
           </div>
-          <span style={styles.batchBadge}>{exportBatches.length} batches</span>
+          <span style={styles.batchBadge}>{totalBatchCount} batches</span>
+        </div>
+        <div style={styles.batchToolbar}>
+          <input
+            style={styles.input}
+            placeholder="Search batch id"
+            value={batchQuery}
+            onChange={(event) => setBatchQuery(event.target.value)}
+          />
+          <select style={styles.select} value={batchStatusFilter} onChange={(event) => setBatchStatusFilter(event.target.value as 'all' | 'ready_for_training' | 'used_in_training')}>
+            <option value="all">All batch states</option>
+            <option value="ready_for_training">Ready for training</option>
+            <option value="used_in_training">Used in training</option>
+          </select>
         </div>
         {exportBatches.length > 0 ? (
-          <div style={styles.batchGrid}>
-            {exportBatches.map((batch) => (
-              <article key={batch.batch_id} style={styles.batchCard}>
-                <div style={styles.batchCardTop}>
-                  <div>
-                    <p style={styles.factLabel}>Batch ID</p>
-                    <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
+          <>
+            <div style={styles.batchGrid}>
+              {exportBatches.map((batch) => (
+                <article key={batch.batch_id} style={styles.batchCard}>
+                  <div style={styles.batchCardTop}>
+                    <div>
+                      <p style={styles.factLabel}>Batch ID</p>
+                      <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
+                    </div>
+                    <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
+                      {batch.ready_for_training ? 'Ready for SLM training' : 'Used in training'}
+                    </span>
                   </div>
-                  <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
-                    {batch.ready_for_training ? 'Ready for SLM training' : 'Used in training'}
-                  </span>
-                </div>
-                <div style={styles.batchMetaList}>
-                  <span>{batch.exported_count} records</span>
-                  <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
-                  <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
-                </div>
-                <div style={styles.batchStatusRow}>
-                  <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
-                  <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
-                  <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
-                  <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
-                </div>
-                <div style={styles.batchFooter}>
-                  <span style={styles.batchFooterText}>
-                    {batch.ready_for_training
-                      ? 'This batch is exported and ready for the upcoming distillation job flow.'
-                      : 'This batch has already been used in a training workflow and remains stored for traceability.'}
-                  </span>
-                  <button type="button" style={styles.actionButton} disabled>
-                    Distillation pipeline next
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+                  <div style={styles.batchMetaList}>
+                    <span>{batch.exported_count} records</span>
+                    <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
+                    <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
+                  </div>
+                  <div style={styles.batchStatusRow}>
+                    <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
+                    <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
+                    <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
+                    <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
+                  </div>
+                  <div style={styles.batchFooter}>
+                    <span style={styles.batchFooterText}>
+                      {batch.ready_for_training
+                        ? 'This batch is exported and ready for the upcoming distillation job flow.'
+                        : 'This batch has already been used in a training workflow and remains stored for traceability.'}
+                    </span>
+                    <button type="button" style={styles.actionButton} disabled>
+                      Distillation pipeline next
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div style={styles.paginationBar}>
+              <span style={styles.paginationMeta}>
+                Page {batchesPage} of {batchTotalPages} · Showing {currentBatchStart}-{currentBatchEnd} of {totalBatchCount}
+              </span>
+              <div style={styles.paginationControls}>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => setBatchesPage((page) => Math.max(1, page - 1))}
+                  disabled={batchesPage === 1 || loadingMore}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => setBatchesPage((page) => Math.min(batchTotalPages, page + 1))}
+                  disabled={batchesPage >= batchTotalPages || loadingMore}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
         ) : (
           <div style={styles.emptyStateCard}>
             <h3 style={styles.emptyStateTitle}>No export batches yet</h3>
@@ -1919,6 +1984,12 @@ const styles: Record<string, CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
     gap: '14px',
+  },
+  batchToolbar: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(240px, 1fr) minmax(220px, 280px)',
+    gap: '12px',
+    marginBottom: '16px',
   },
   batchCard: {
     borderRadius: '20px',
