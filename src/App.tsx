@@ -359,7 +359,7 @@ export function App() {
   const pipelineStages = useMemo(
     () => [
       { key: 'pending_review' as const, label: 'Pending review', count: overview.pendingReviewRecords },
-      { key: 'approved_for_distillation' as const, label: 'Approved', count: overview.approvedForDistillationRecords },
+      { key: 'approved_for_distillation' as const, label: 'Ready to export', count: overview.approvedForDistillationRecords },
       { key: 'excluded' as const, label: 'Excluded', count: overview.excludedForDistillationRecords },
       { key: 'exported' as const, label: 'Exported', count: overview.exportedRecords },
       { key: 'used_in_training' as const, label: 'Used in training', count: overview.usedInTrainingRecords },
@@ -599,16 +599,16 @@ export function App() {
         </div>
         <div style={styles.heroPanel}>
           <div style={styles.heroPanelTop}>
-            <span style={styles.heroPanelLabel}>Training readiness</span>
+            <span style={styles.heroPanelLabel}>Export readiness</span>
             <strong style={styles.heroPanelValue}>
-              {overview.totalRecords === 0 ? '0%' : `${Math.round((overview.usableRecords / overview.totalRecords) * 100)}%`}
+              {overview.totalRecords === 0 ? '0%' : `${Math.round((overview.approvedForDistillationRecords / overview.totalRecords) * 100)}%`}
             </strong>
           </div>
           <div style={styles.progressTrack}>
             <div
               style={{
                 ...styles.progressFill,
-                width: overview.totalRecords === 0 ? '0%' : `${(overview.usableRecords / overview.totalRecords) * 100}%`,
+                width: overview.totalRecords === 0 ? '0%' : `${(overview.approvedForDistillationRecords / overview.totalRecords) * 100}%`,
               }}
             />
           </div>
@@ -654,7 +654,7 @@ export function App() {
       <section style={styles.summaryGrid}>
         <SummaryCard title="Installations" value={overview.totalInstallations.toString()} subtitle="Registered app instances" />
         <SummaryCard title="Records collected" value={overview.totalRecords.toString()} subtitle="Teacher records received" />
-        <SummaryCard title="Ready for training" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} excluded`} tone="green" />
+        <SummaryCard title="Ready to export" value={overview.approvedForDistillationRecords.toString()} subtitle={`${overview.excludedForDistillationRecords} excluded`} tone="green" />
         <SummaryCard
           title="Status breakdown"
           value={`${overview.safeRecords}/${overview.warningRecords}/${overview.unsafeRecords}`}
@@ -697,8 +697,17 @@ export function App() {
         <ChartCard title="Record source" subtitle="Barcode versus photo ingestion">
           <HorizontalBarChart data={chartData.route} emptyLabel="No route data in current filter." />
         </ChartCard>
-        <ChartCard title="Training eligibility" subtitle="Visible records ready for export">
-          <HorizontalBarChart data={chartData.training} emptyLabel="No training-state data in current filter." />
+        <ChartCard title="Lifecycle overview" subtitle="Where the visible records sit in the distillation workflow">
+          <HorizontalBarChart
+            data={[
+              { label: 'Needs review', value: filteredRecords.filter((record) => record.distillation_status === 'pending_review').length, tone: 'slate' as const },
+              { label: 'Ready to export', value: filteredRecords.filter((record) => record.distillation_status === 'approved_for_distillation').length, tone: 'green' as const },
+              { label: 'Exported', value: filteredRecords.filter((record) => record.distillation_status === 'exported').length, tone: 'amber' as const },
+              { label: 'Used in training', value: filteredRecords.filter((record) => record.distillation_status === 'used_in_training').length, tone: 'green' as const },
+              { label: 'Excluded', value: filteredRecords.filter((record) => record.distillation_status === 'excluded').length, tone: 'red' as const },
+            ]}
+            emptyLabel="No lifecycle data in current filter."
+          />
         </ChartCard>
         <ChartCard title="Top Categories" subtitle="Most common visible categories">
           <HorizontalBarChart data={chartData.categories} emptyLabel="No category data in current filter." />
@@ -758,7 +767,7 @@ export function App() {
               <div>
                 <h2 style={styles.cardTitle}>Record curation</h2>
                 <p style={styles.cardSubtitle}>
-                  Search first, then narrow by route, status, platform, category, or training state. Records stay readable
+                  Search first, then narrow by route, status, lifecycle stage, platform, category, or training state. Records stay readable
                   while detail stays one click away.
                 </p>
               </div>
@@ -793,8 +802,8 @@ export function App() {
                 </select>
                 <select style={styles.select} value={distillationFilter} onChange={(event) => setDistillationFilter(event.target.value as DistillationFilter)}>
                   <option value="all">All lifecycle stages</option>
-                  <option value="pending_review">Pending review</option>
-                  <option value="approved_for_distillation">Approved</option>
+                  <option value="pending_review">Needs review</option>
+                  <option value="approved_for_distillation">Ready to export</option>
                   <option value="excluded">Excluded</option>
                   <option value="exported">Exported</option>
                   <option value="used_in_training">Used in training</option>
@@ -855,7 +864,6 @@ export function App() {
                     updating={updatingRecordId === item.id}
                     deleting={deletingRecordId === item.id}
                     onSelect={() => setSelectedRecordId(item.id)}
-                    onToggleTraining={() => void toggleTrainingEligibility(item)}
                     onApprove={() => void updateDistillationStatus([item.id], 'approved_for_distillation')}
                     onExclude={() => void updateDistillationStatus([item.id], 'excluded', { excludedReason: 'Excluded from record card action' })}
                     onDelete={() => void deleteRecord(item.id)}
@@ -899,8 +907,8 @@ export function App() {
                 <>
                   <div style={styles.detailSummaryStrip}>
                     <SummaryFact label="Status" value={displayStatus(selectedRecord.overall_status)} />
-                    <SummaryFact label="Training" value={selectedRecord.usable_for_training ? 'Usable' : 'Excluded'} />
                     <SummaryFact label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
+                    <SummaryFact label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible' : 'Excluded'} />
                     <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
                     <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
                     <SummaryFact label="Created" value={formatDateTime(selectedRecord.created_at)} />
@@ -912,6 +920,7 @@ export function App() {
                       <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
                       <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
                       <DetailRow label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
+                      <DetailRow label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible for training' : 'Excluded from training'} />
                       <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not exported yet'} />
                       <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
                     </DetailSection>
@@ -1105,7 +1114,6 @@ function RecordListCard({
   updating,
   deleting,
   onSelect,
-  onToggleTraining,
   onApprove,
   onExclude,
   onDelete,
@@ -1115,7 +1123,6 @@ function RecordListCard({
   updating: boolean
   deleting: boolean
   onSelect: () => void
-  onToggleTraining: () => void
   onApprove: () => void
   onExclude: () => void
   onDelete: () => void
@@ -1133,9 +1140,6 @@ function RecordListCard({
           <div style={styles.recordIdRow}>
             <span style={styles.inlineMetaLabel}>#{record.id}</span>
             <span style={statusPillStyle(record.overall_status)}>{displayStatus(record.overall_status)}</span>
-            <span style={trainingStateStyle(record.usable_for_training)}>
-              {record.usable_for_training ? 'Usable' : 'Excluded'}
-            </span>
             <span style={distillationStatusStyle(record.distillation_status)}>
               {displayDistillationStatus(record.distillation_status)}
             </span>
@@ -1187,17 +1191,6 @@ function RecordListCard({
             disabled={updating || deleting}
           >
             Exclude
-          </button>
-          <button
-            type="button"
-            style={record.usable_for_training ? styles.actionButtonMuted : styles.actionButtonPositive}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleTraining()
-            }}
-            disabled={updating || deleting}
-          >
-            {updating ? 'Saving...' : record.usable_for_training ? 'Exclude' : 'Include'}
           </button>
           <button
             type="button"
@@ -1347,9 +1340,9 @@ function displayStatus(status: string | null): string {
 function displayDistillationStatus(status: DistillationStatus): string {
   switch (status) {
     case 'pending_review':
-      return 'Pending review'
+      return 'Needs review'
     case 'approved_for_distillation':
-      return 'Approved'
+      return 'Ready to export'
     case 'excluded':
       return 'Excluded'
     case 'exported':
@@ -1455,7 +1448,7 @@ function distillationStatusStyle(status: DistillationStatus): CSSProperties {
   if (status === 'archived') {
     return { ...styles.distillationPill, background: '#f2f4f3', color: '#5f7166' }
   }
-  return { ...styles.distillationPill, background: '#fff7e3', color: '#8b6408' }
+  return { ...styles.distillationPill, background: '#eef2f0', color: '#5d6f65' }
 }
 
 const styles: Record<string, CSSProperties> = {
