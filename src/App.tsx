@@ -73,6 +73,29 @@ type DistillationJobListResponse = {
   has_more: boolean
 }
 
+type ModelVersion = {
+  id: number
+  job_id: number
+  batch_id: string
+  model_name: string
+  base_model: string
+  task_type: string
+  status: string
+  metrics_json: Record<string, unknown> | null
+  artifact_uri: string | null
+  created_at: string
+  activated_at: string | null
+  archived_at: string | null
+}
+
+type ModelVersionListResponse = {
+  versions: ModelVersion[]
+  total_count: number
+  skip: number
+  limit: number
+  has_more: boolean
+}
+
 type RecordPayload = {
   schema_version?: number
   created_at_epoch_ms?: number
@@ -171,6 +194,7 @@ export function App() {
   const [records, setRecords] = useState<RecordSummary[]>([])
   const [exportBatches, setExportBatches] = useState<DistillationBatch[]>([])
   const [distillationJobs, setDistillationJobs] = useState<DistillationJob[]>([])
+  const [modelVersions, setModelVersions] = useState<ModelVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
@@ -197,15 +221,18 @@ export function App() {
   const RECORDS_PAGE_SIZE = 25
   const BATCHES_PAGE_SIZE = 12
   const JOBS_PAGE_SIZE = 8
+  const MODEL_VERSIONS_PAGE_SIZE = 8
   
   const [installationsPage, setInstallationsPage] = useState(1)
   const [recordsPage, setRecordsPage] = useState(1)
   const [batchesPage, setBatchesPage] = useState(1)
   const [jobsPage, setJobsPage] = useState(1)
+  const [modelVersionsPage, setModelVersionsPage] = useState(1)
   const [totalInstallationsCount, setTotalInstallationsCount] = useState(0)
   const [totalRecordsCount, setTotalRecordsCount] = useState(0)
   const [totalBatchCount, setTotalBatchCount] = useState(0)
   const [totalJobCount, setTotalJobCount] = useState(0)
+  const [totalModelVersionCount, setTotalModelVersionCount] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
@@ -225,6 +252,7 @@ export function App() {
     batchQuery,
     batchStatusFilter,
     jobsPage,
+    modelVersionsPage,
   ])
 
   useEffect(() => {
@@ -249,6 +277,7 @@ export function App() {
       const recordsSkip = (recordsPage - 1) * RECORDS_PAGE_SIZE
       const batchesSkip = (batchesPage - 1) * BATCHES_PAGE_SIZE
       const jobsSkip = (jobsPage - 1) * JOBS_PAGE_SIZE
+      const modelVersionsSkip = (modelVersionsPage - 1) * MODEL_VERSIONS_PAGE_SIZE
       const installationsParams = new URLSearchParams({
         skip: String(installationsSkip),
         limit: String(INSTALLATIONS_PAGE_SIZE),
@@ -282,33 +311,41 @@ export function App() {
         skip: String(jobsSkip),
         limit: String(JOBS_PAGE_SIZE),
       })
+      const modelVersionsParams = new URLSearchParams({
+        skip: String(modelVersionsSkip),
+        limit: String(MODEL_VERSIONS_PAGE_SIZE),
+      })
 
-      const [installationsResponse, recordsResponse, exportBatchesResponse, distillationJobsResponse] = await Promise.all([
+      const [installationsResponse, recordsResponse, exportBatchesResponse, distillationJobsResponse, modelVersionsResponse] = await Promise.all([
         fetch(`${API_BASE}/installations?${installationsParams.toString()}`),
         fetch(`${API_BASE}/records?${recordsParams.toString()}`),
         fetch(`${API_BASE}/records/export-batches?${batchesParams.toString()}`),
         fetch(`${API_BASE}/distillation-jobs?${jobsParams.toString()}`),
+        fetch(`${API_BASE}/model-versions?${modelVersionsParams.toString()}`),
       ])
 
-      if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok || !distillationJobsResponse.ok) {
+      if (!installationsResponse.ok || !recordsResponse.ok || !exportBatchesResponse.ok || !distillationJobsResponse.ok || !modelVersionsResponse.ok) {
         throw new Error('Failed to load dashboard data from backend')
       }
 
-      const [installationsJson, recordsJson, exportBatchesJson, distillationJobsJson] = await Promise.all([
+      const [installationsJson, recordsJson, exportBatchesJson, distillationJobsJson, modelVersionsJson] = await Promise.all([
         installationsResponse.json() as Promise<PaginatedInstallationsResponse>,
         recordsResponse.json() as Promise<PaginatedRecordsResponse>,
         exportBatchesResponse.json() as Promise<DistillationBatchListResponse>,
         distillationJobsResponse.json() as Promise<DistillationJobListResponse>,
+        modelVersionsResponse.json() as Promise<ModelVersionListResponse>,
       ])
 
       setInstallations(installationsJson.installations)
       setRecords(recordsJson.records)
       setExportBatches(exportBatchesJson.batches)
       setDistillationJobs(distillationJobsJson.jobs)
+      setModelVersions(modelVersionsJson.versions)
       setTotalInstallationsCount(installationsJson.total_count)
       setTotalRecordsCount(recordsJson.total_count)
       setTotalBatchCount(exportBatchesJson.total_count)
       setTotalJobCount(distillationJobsJson.total_count)
+      setTotalModelVersionCount(modelVersionsJson.total_count)
 
       if (selectedRecordId != null && !recordsJson.records.some((record) => record.id === selectedRecordId)) {
         setSelectedRecordId(null)
@@ -458,6 +495,7 @@ export function App() {
   const recordTotalPages = Math.max(1, Math.ceil(totalRecordsCount / RECORDS_PAGE_SIZE))
   const batchTotalPages = Math.max(1, Math.ceil(totalBatchCount / BATCHES_PAGE_SIZE))
   const jobTotalPages = Math.max(1, Math.ceil(totalJobCount / JOBS_PAGE_SIZE))
+  const modelVersionTotalPages = Math.max(1, Math.ceil(totalModelVersionCount / MODEL_VERSIONS_PAGE_SIZE))
   const currentInstallationStart = totalInstallationsCount === 0 ? 0 : (installationsPage - 1) * INSTALLATIONS_PAGE_SIZE + 1
   const currentInstallationEnd = totalInstallationsCount === 0 ? 0 : currentInstallationStart + installations.length - 1
   const currentRecordStart = totalRecordsCount === 0 ? 0 : (recordsPage - 1) * RECORDS_PAGE_SIZE + 1
@@ -466,6 +504,8 @@ export function App() {
   const currentBatchEnd = totalBatchCount === 0 ? 0 : currentBatchStart + exportBatches.length - 1
   const currentJobStart = totalJobCount === 0 ? 0 : (jobsPage - 1) * JOBS_PAGE_SIZE + 1
   const currentJobEnd = totalJobCount === 0 ? 0 : currentJobStart + distillationJobs.length - 1
+  const currentModelVersionStart = totalModelVersionCount === 0 ? 0 : (modelVersionsPage - 1) * MODEL_VERSIONS_PAGE_SIZE + 1
+  const currentModelVersionEnd = totalModelVersionCount === 0 ? 0 : currentModelVersionStart + modelVersions.length - 1
 
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
@@ -997,6 +1037,72 @@ export function App() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section style={styles.pipelinePanel}>
+        <div style={styles.pipelinePanelHeader}>
+          <div>
+            <h2 style={styles.cardTitle}>Model Versions</h2>
+            <p style={styles.cardSubtitle}>
+              Completed jobs produce model-version artifacts. These versions are the future handoff point for hosted SLM testing and activation.
+            </p>
+          </div>
+          <span style={styles.batchBadge}>{totalModelVersionCount} versions</span>
+        </div>
+        {modelVersions.length > 0 ? (
+          <>
+            <div style={styles.batchGrid}>
+              {modelVersions.map((version) => (
+                <article key={version.id} style={styles.batchCard}>
+                  <div style={styles.batchCardTop}>
+                    <div>
+                      <p style={styles.factLabel}>Version #{version.id}</p>
+                      <h3 style={styles.batchCardTitle}>{version.model_name}</h3>
+                    </div>
+                    <span style={version.status === 'ready_for_test' ? styles.batchReadyPill : styles.batchUsedPill}>
+                      {version.status}
+                    </span>
+                  </div>
+                  <div style={styles.batchMetaList}>
+                    <span>Job {version.job_id}</span>
+                    <span>Batch {version.batch_id}</span>
+                    <span>Base model {version.base_model}</span>
+                    <span>Created {formatDateTime(version.created_at)}</span>
+                  </div>
+                  <div style={styles.batchFooter}>
+                    <span style={styles.batchFooterText}>
+                      {version.artifact_uri ?? 'No artifact URI yet'}
+                    </span>
+                  </div>
+                  {version.metrics_json ? (
+                    <div style={styles.jobMetricsBox}>
+                      <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
+                      <span style={styles.jobMetricsText}>{JSON.stringify(version.metrics_json)}</span>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+            <div style={styles.paginationBar}>
+              <span style={styles.paginationMeta}>
+                Page {modelVersionsPage} of {modelVersionTotalPages} · Showing {currentModelVersionStart}-{currentModelVersionEnd} of {totalModelVersionCount}
+              </span>
+              <div style={styles.paginationControls}>
+                <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.max(1, page - 1))} disabled={modelVersionsPage === 1 || loadingMore}>
+                  Previous
+                </button>
+                <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.min(modelVersionTotalPages, page + 1))} disabled={modelVersionsPage >= modelVersionTotalPages || loadingMore}>
+                  Next
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div style={styles.emptyStateCard}>
+            <h3 style={styles.emptyStateTitle}>No model versions yet</h3>
+            <p style={styles.emptyPanelText}>When a distillation job completes, the server will register a model version here.</p>
+          </div>
+        )}
       </section>
 
       <section style={styles.pipelinePanel}>
