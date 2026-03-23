@@ -224,6 +224,7 @@ export function App() {
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
+  const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
   const [testingInference, setTestingInference] = useState(false)
   const [inferenceResult, setInferenceResult] = useState<StudentInferenceResponse | null>(null)
@@ -745,6 +746,35 @@ export function App() {
       setError(err instanceof Error ? err.message : 'Failed to create distillation job')
     } finally {
       setCreatingJobBatchId(null)
+    }
+  }
+
+  async function downloadTrainingExport(batchId: string) {
+    setDownloadingBatchId(batchId)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/records/export-batches/${encodeURIComponent(batchId)}/training-export`)
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail ?? 'Failed to download training export')
+      }
+
+      const blob = await response.blob()
+      const disposition = response.headers.get('content-disposition')
+      const filenameMatch = disposition?.match(/filename="([^"]+)"/)
+      const filename = filenameMatch?.[1] ?? `${batchId}.jsonl`
+      const url = window.URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to download training export')
+    } finally {
+      setDownloadingBatchId(null)
     }
   }
 
@@ -1384,14 +1414,24 @@ export function App() {
                         ? 'This batch is exported and ready for the upcoming distillation job flow.'
                         : 'This batch has already been used in a training workflow and remains stored for traceability.'}
                     </span>
-                    <button
-                      type="button"
-                      style={styles.actionButton}
-                      disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
-                      onClick={() => void createDistillationJob(batch.batch_id)}
-                    >
-                      {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
-                    </button>
+                    <div style={styles.batchActions}>
+                      <button
+                        type="button"
+                        style={styles.actionButton}
+                        disabled={downloadingBatchId === batch.batch_id}
+                        onClick={() => void downloadTrainingExport(batch.batch_id)}
+                      >
+                        {downloadingBatchId === batch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.actionButton}
+                        disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
+                        onClick={() => void createDistillationJob(batch.batch_id)}
+                      >
+                        {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}
@@ -2522,6 +2562,12 @@ const styles: Record<string, CSSProperties> = {
     gap: '12px',
     alignItems: 'flex-end',
     flexWrap: 'wrap',
+  },
+  batchActions: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
   },
   batchFooterText: {
     color: '#617466',
