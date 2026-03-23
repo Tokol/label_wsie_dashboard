@@ -562,6 +562,7 @@ export function App() {
   const activeFilterCount = [routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter].filter(
     (value) => value !== 'all',
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
+  const distillationPreview = selectedRecord ? buildDistillationExportPreview(selectedRecord) : null
 
   if (selectedRecord) {
     return (
@@ -699,6 +700,13 @@ export function App() {
                   </button>
                 </div>
                 {showRawJson ? <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre> : null}
+              </DetailSection>
+
+              <DetailSection title="Distillation Export Preview" fullWidth>
+                <p style={styles.previewSectionNote}>
+                  Only the fields intended for SLM distillation are included here. Full payload metadata and transport details are excluded.
+                </p>
+                <pre style={styles.previewJsonBlock}>{JSON.stringify(distillationPreview, null, 2)}</pre>
               </DetailSection>
             </div>
           </section>
@@ -1358,6 +1366,29 @@ function applyDistillationState(
           },
         }
       : record.payload,
+  }
+}
+
+function buildDistillationExportPreview(record: RecordSummary) {
+  return {
+    record_id: record.id,
+    batch_id: record.distillation_batch_id,
+    schema_version: record.schema_version ?? record.payload?.schema_version ?? null,
+    created_at: record.created_at,
+    input: {
+      product_name: record.payload?.input?.product_name_original ?? null,
+      brand: record.payload?.input?.brand_original ?? null,
+      category: record.payload?.input?.category_english ?? null,
+      origin_country: record.payload?.input?.origin_country_english ?? null,
+      barcode: record.payload?.input?.barcode ?? null,
+      ingredients: record.payload?.input?.ingredients_english ?? [],
+      additives: record.payload?.input?.additives_english ?? [],
+      allergens: record.payload?.input?.allergens_english ?? [],
+    },
+    preferences: record.payload?.preferences ?? {},
+    label: {
+      overall_status: normalizeStatus(record.payload?.teacher_result?.overall_status ?? record.overall_status),
+    },
   }
 }
 
@@ -2341,6 +2372,25 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'flex-start',
     gap: '16px',
     flexWrap: 'wrap',
+  },
+  previewSectionNote: {
+    margin: 0,
+    color: '#667a6d',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  previewJsonBlock: {
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    background: '#f6faf7',
+    color: '#193326',
+    borderRadius: '16px',
+    border: '1px solid #e1ebe4',
+    padding: '16px',
+    fontSize: '12px',
+    lineHeight: 1.6,
+    overflowX: 'auto',
   },
   detailSectionShell: {
     marginTop: '18px',
