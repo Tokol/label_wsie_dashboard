@@ -96,6 +96,14 @@ type ModelVersionListResponse = {
   has_more: boolean
 }
 
+type StudentInferenceResponse = {
+  model_version_id: number
+  model_name: string
+  overall_status: string
+  decision_line: string
+  confidence: number
+}
+
 type RecordPayload = {
   schema_version?: number
   created_at_epoch_ms?: number
@@ -217,6 +225,8 @@ export function App() {
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
+  const [testingInference, setTestingInference] = useState(false)
+  const [inferenceResult, setInferenceResult] = useState<StudentInferenceResponse | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -761,6 +771,42 @@ export function App() {
     }
   }
 
+  async function runStudentInferenceTest() {
+    if (!activeModelVersion) return
+    setTestingInference(true)
+    setError(null)
+    try {
+      const response = await fetch(`${API_BASE}/student-inference/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: {
+            product_name: 'Olive oil',
+            brand: 'Primadonna',
+            category: 'fats',
+            ingredients: ['olive oil'],
+          },
+          preferences: {
+            religion: { enabled: true },
+            ethical: { enabled: true },
+          },
+        }),
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(payload?.detail ?? 'Failed to run student inference test')
+      }
+
+      const data = (await response.json()) as StudentInferenceResponse
+      setInferenceResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to run student inference test')
+    } finally {
+      setTestingInference(false)
+    }
+  }
+
   const activeFilterCount = [routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter].filter(
     (value) => value !== 'all',
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
@@ -1061,6 +1107,20 @@ export function App() {
               <span>Base model {activeModelVersion.base_model}</span>
               <span>{activeModelVersion.activated_at ? `Activated ${formatDateTime(activeModelVersion.activated_at)}` : 'Activation time not available'}</span>
             </div>
+            <div style={styles.batchFooter}>
+              <span style={styles.batchFooterText}>
+                Simulated runtime contract for the future hosted SLM endpoint.
+              </span>
+              <button type="button" style={styles.actionButtonPositive} onClick={() => void runStudentInferenceTest()} disabled={testingInference}>
+                {testingInference ? 'Testing...' : 'Run test inference'}
+              </button>
+            </div>
+            {inferenceResult ? (
+              <div style={styles.jobMetricsBox}>
+                <span style={styles.jobMetricsTitle}>Latest inference response</span>
+                <span style={styles.jobMetricsText}>{JSON.stringify(inferenceResult)}</span>
+              </div>
+            ) : null}
           </article>
         ) : (
           <div style={styles.emptyStateCard}>
