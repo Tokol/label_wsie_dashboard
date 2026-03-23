@@ -66,7 +66,7 @@ type RecordSummary = {
 }
 
 type FilterOption = 'all' | 'barcode' | 'photo'
-type StatusFilter = 'all' | 'safe' | 'warning' | 'avoid' | 'unknown'
+type StatusFilter = 'all' | 'safe' | 'warning' | 'unsafe' | 'cannot_assess' | 'unknown'
 type TrainingFilter = 'all' | 'usable' | 'excluded'
 
 type ChartDatum = {
@@ -182,7 +182,8 @@ export function App() {
     const usable = records.filter((record) => record.usable_for_training).length
     const safe = records.filter((record) => normalizeStatus(record.overall_status) === 'safe').length
     const warning = records.filter((record) => normalizeStatus(record.overall_status) === 'warning').length
-    const avoid = records.filter((record) => normalizeStatus(record.overall_status) === 'avoid').length
+    const unsafe = records.filter((record) => normalizeStatus(record.overall_status) === 'unsafe').length
+    const cannotAssess = records.filter((record) => normalizeStatus(record.overall_status) === 'cannot_assess').length
     const recentThreshold = Date.now() - 7 * 24 * 60 * 60 * 1000
     const recentRecords = records.filter((record) => new Date(record.created_at).getTime() >= recentThreshold).length
 
@@ -193,7 +194,8 @@ export function App() {
       excludedRecords: totalRecordsCount - usable,
       safeRecords: safe,
       warningRecords: warning,
-      avoidRecords: avoid,
+      unsafeRecords: unsafe,
+      cannotAssessRecords: cannotAssess,
       latestPayloadAt: records.length > 0 ? records[0].created_at : null,
       recentRecords,
     }
@@ -280,7 +282,8 @@ export function App() {
       status: [
         { label: 'Safe', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'safe').length, tone: 'green' as const },
         { label: 'Warning', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'warning').length, tone: 'amber' as const },
-        { label: 'Avoid', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'avoid').length, tone: 'red' as const },
+        { label: 'Unsafe', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'unsafe').length, tone: 'red' as const },
+        { label: 'Cannot Assess', value: filteredRecords.filter((record) => normalizeStatus(record.overall_status) === 'cannot_assess').length, tone: 'slate' as const },
       ],
       route: [
         { label: 'Barcode', value: filteredRecords.filter((record) => record.route_type === 'barcode').length, tone: 'green' as const },
@@ -471,7 +474,11 @@ export function App() {
         <SummaryCard title="Installations" value={overview.totalInstallations.toString()} subtitle="Registered app instances" />
         <SummaryCard title="Payloads" value={overview.totalRecords.toString()} subtitle="Teacher records collected" />
         <SummaryCard title="Training Ready" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} excluded`} tone="green" />
-        <SummaryCard title="Status Mix" value={`${overview.safeRecords}/${overview.warningRecords}/${overview.avoidRecords}`} subtitle="Safe / warning / avoid" />
+        <SummaryCard
+          title="Status Mix"
+          value={`${overview.safeRecords}/${overview.warningRecords}/${overview.unsafeRecords}`}
+          subtitle={`Safe / warning / unsafe${overview.cannotAssessRecords > 0 ? ` (+${overview.cannotAssessRecords} cannot assess)` : ''}`}
+        />
       </section>
 
       <section style={styles.analyticsStrip}>
@@ -566,7 +573,8 @@ export function App() {
                   <option value="all">All statuses</option>
                   <option value="safe">Safe</option>
                   <option value="warning">Warning</option>
-                  <option value="avoid">Avoid</option>
+                  <option value="unsafe">Unsafe</option>
+                  <option value="cannot_assess">Cannot assess</option>
                   <option value="unknown">Unknown</option>
                 </select>
                 <select style={styles.select} value={trainingFilter} onChange={(event) => setTrainingFilter(event.target.value as TrainingFilter)}>
@@ -954,10 +962,16 @@ function applyTrainingFlag(record: RecordSummary, usableForTraining: boolean): R
   }
 }
 
-function normalizeStatus(status: string | null): 'safe' | 'warning' | 'avoid' | 'unknown' {
+function normalizeStatus(status: string | null): 'safe' | 'warning' | 'unsafe' | 'cannot_assess' | 'unknown' {
   const normalized = (status ?? 'unknown').toLowerCase()
-  if (normalized === 'safe' || normalized === 'warning' || normalized === 'avoid') {
+  if (normalized === 'safe' || normalized === 'warning') {
     return normalized
+  }
+  if (normalized === 'unsafe' || normalized === 'violation') {
+    return 'unsafe'
+  }
+  if (normalized === 'cannot_assess' || normalized === 'cannot assess') {
+    return 'cannot_assess'
   }
   return 'unknown'
 }
@@ -965,6 +979,7 @@ function normalizeStatus(status: string | null): 'safe' | 'warning' | 'avoid' | 
 function displayStatus(status: string | null): string {
   const normalized = normalizeStatus(status)
   if (normalized === 'unknown') return 'Unknown'
+  if (normalized === 'cannot_assess') return 'Cannot Assess'
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
@@ -1031,8 +1046,11 @@ function statusPillStyle(status: string | null): CSSProperties {
   if (normalized === 'warning') {
     return { ...styles.statusPill, background: '#fff2db', color: '#8b5609' }
   }
-  if (normalized === 'avoid') {
+  if (normalized === 'unsafe') {
     return { ...styles.statusPill, background: '#ffe3e0', color: '#9c2f2e' }
+  }
+  if (normalized === 'cannot_assess') {
+    return { ...styles.statusPill, background: '#edf1ef', color: '#56695e' }
   }
   return { ...styles.statusPill, background: '#edf1ef', color: '#5a6d62' }
 }
