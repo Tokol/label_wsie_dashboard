@@ -411,9 +411,9 @@ export function App() {
             View incoming teacher payloads in a clean dashboard that supports fast filtering and bulk training decisions.
           </p>
           <div style={styles.heroMetaRow}>
-            <HeroBadge label="Last payload" value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'None yet'} />
-            <HeroBadge label="Recent 7d" value={`${overview.recentRecords} records`} />
-            <HeroBadge label="Filters" value={activeFilterCount === 0 ? 'None active' : `${activeFilterCount} active`} />
+            <HeroBadge label="Latest record" value={overview.latestPayloadAt ? formatDateTime(overview.latestPayloadAt) : 'No records yet'} />
+            <HeroBadge label="Last 7 days" value={`${overview.recentRecords} records`} />
+            <HeroBadge label="Active filters" value={activeFilterCount === 0 ? 'None' : `${activeFilterCount} active`} />
           </div>
         </div>
         <div style={styles.heroPanel}>
@@ -472,10 +472,10 @@ export function App() {
 
       <section style={styles.summaryGrid}>
         <SummaryCard title="Installations" value={overview.totalInstallations.toString()} subtitle="Registered app instances" />
-        <SummaryCard title="Payloads" value={overview.totalRecords.toString()} subtitle="Teacher records collected" />
-        <SummaryCard title="Training Ready" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} excluded`} tone="green" />
+        <SummaryCard title="Records collected" value={overview.totalRecords.toString()} subtitle="Teacher records received" />
+        <SummaryCard title="Ready for training" value={overview.usableRecords.toString()} subtitle={`${overview.excludedRecords} excluded`} tone="green" />
         <SummaryCard
-          title="Status Mix"
+          title="Status breakdown"
           value={`${overview.safeRecords}/${overview.warningRecords}/${overview.unsafeRecords}`}
           subtitle={`Safe / warning / unsafe${overview.cannotAssessRecords > 0 ? ` (+${overview.cannotAssessRecords} cannot assess)` : ''}`}
         />
@@ -485,10 +485,10 @@ export function App() {
         <ChartCard title="Status Distribution" subtitle="Current filtered outcome mix">
           <HorizontalBarChart data={chartData.status} emptyLabel="No status data in current filter." />
         </ChartCard>
-        <ChartCard title="Route Split" subtitle="Barcode versus photo ingestion">
+        <ChartCard title="Record source" subtitle="Barcode versus photo ingestion">
           <HorizontalBarChart data={chartData.route} emptyLabel="No route data in current filter." />
         </ChartCard>
-        <ChartCard title="Training State" subtitle="Visible records ready for export">
+        <ChartCard title="Training eligibility" subtitle="Visible records ready for export">
           <HorizontalBarChart data={chartData.training} emptyLabel="No training-state data in current filter." />
         </ChartCard>
         <ChartCard title="Top Categories" subtitle="Most common visible categories">
@@ -547,7 +547,7 @@ export function App() {
           <article style={styles.card}>
             <div style={styles.cardHeader}>
               <div>
-                <h2 style={styles.cardTitle}>Record Review</h2>
+                <h2 style={styles.cardTitle}>Record curation</h2>
                 <p style={styles.cardSubtitle}>
                   Search first, then narrow by route, status, platform, category, or training state. Records stay readable
                   while detail stays one click away.
@@ -575,7 +575,7 @@ export function App() {
                   <option value="warning">Warning</option>
                   <option value="unsafe">Unsafe</option>
                   <option value="cannot_assess">Cannot assess</option>
-                  <option value="unknown">Unknown</option>
+                  <option value="unknown">Unspecified</option>
                 </select>
                 <select style={styles.select} value={trainingFilter} onChange={(event) => setTrainingFilter(event.target.value as TrainingFilter)}>
                   <option value="all">All training states</option>
@@ -657,7 +657,7 @@ export function App() {
             <section style={styles.detailSectionShell}>
               <div style={styles.detailRailHeader}>
                 <div>
-                  <h3 style={styles.detailRailTitle}>Record Detail</h3>
+                  <h3 style={styles.detailRailTitle}>Record details</h3>
                   <p style={styles.detailRailSubtitle}>
                     Expanded full-width review panel for the currently selected teacher payload.
                   </p>
@@ -670,8 +670,8 @@ export function App() {
                   <div style={styles.detailSummaryStrip}>
                     <SummaryFact label="Status" value={displayStatus(selectedRecord.overall_status)} />
                     <SummaryFact label="Training" value={selectedRecord.usable_for_training ? 'Usable' : 'Excluded'} />
-                    <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unknown'} />
-                    <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unknown'} />
+                    <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
+                    <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
                     <SummaryFact label="Created" value={formatDateTime(selectedRecord.created_at)} />
                     <SummaryFact label="Installation" value={selectedRecord.installation_id} />
                   </div>
@@ -679,33 +679,33 @@ export function App() {
                   <div style={styles.detailGrid}>
                     <DetailSection title="Record Summary">
                       <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
-                      <DetailRow label="Schema version" value={String(selectedRecord.schema_version ?? 'Unknown')} />
-                      <DetailRow label="Top platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'None'} multiline />
+                      <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
+                      <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
                     </DetailSection>
 
                     <DetailSection title="Platform Snapshot">
-                      <DetailRow label="Platform" value={selectedRecord.platform ?? 'Unknown'} />
-                      <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unknown'} />
+                      <DetailRow label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
+                      <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
                       <DetailRow label="Installation" value={selectedRecord.installation_id} multiline />
                     </DetailSection>
 
                     <DetailSection title="Input Snapshot" fullWidth>
-                      <DetailRow label="Product" value={selectedRecord.payload?.input?.product_name_original ?? 'Unknown'} />
-                      <DetailRow label="Brand" value={selectedRecord.payload?.input?.brand_original ?? 'Unknown'} />
-                      <DetailRow label="Category" value={selectedRecord.payload?.input?.category_english ?? 'Unknown'} />
-                      <DetailRow label="Origin" value={selectedRecord.payload?.input?.origin_country_english ?? 'Unknown'} />
-                      <DetailRow label="Barcode" value={selectedRecord.payload?.input?.barcode ?? 'Unavailable'} />
+                      <DetailRow label="Product" value={selectedRecord.payload?.input?.product_name_original ?? 'Not provided'} />
+                      <DetailRow label="Brand" value={selectedRecord.payload?.input?.brand_original ?? 'Not provided'} />
+                      <DetailRow label="Category" value={selectedRecord.payload?.input?.category_english ?? 'Not provided'} />
+                      <DetailRow label="Origin" value={selectedRecord.payload?.input?.origin_country_english ?? 'Not provided'} />
+                      <DetailRow label="Barcode" value={selectedRecord.payload?.input?.barcode ?? 'Not available'} />
                       <DetailRow label="Ingredients" value={joinList(selectedRecord.payload?.input?.ingredients_english)} multiline />
                       <DetailRow label="Additives" value={joinList(selectedRecord.payload?.input?.additives_english)} multiline />
                       <DetailRow label="Allergens" value={joinList(selectedRecord.payload?.input?.allergens_english)} multiline />
                     </DetailSection>
 
                     <DetailSection title="Teacher Output" fullWidth>
-                      <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'Unknown')} />
-                      <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'Unavailable'} multiline />
+                      <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'unknown')} />
+                      <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'No decision summary provided'} multiline />
                       <DetailRow label="Ran evaluations" value={joinList(selectedRecord.payload?.teacher_result?.ran_evaluations)} multiline />
                       <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
-                      <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Unavailable'} />
+                      <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
                     </DetailSection>
 
                     <DetailSection title="Raw Payload JSON" fullWidth>
@@ -808,12 +808,12 @@ function InstallationListItem({
   return (
     <div style={styles.installationCard}>
       <div style={styles.installationTop}>
-        <span style={styles.installationPlatform}>{installation.platform ?? 'Unknown'}</span>
+        <span style={styles.installationPlatform}>{installation.platform ?? 'Unspecified'}</span>
         <span style={styles.installationCount}>{recordCount} records</span>
       </div>
       <div style={styles.installationId}>{installation.installation_id}</div>
       <div style={styles.installationMeta}>
-        <span>v{installation.app_version ?? 'Unknown'}</span>
+        <span>{installation.app_version ? `v${installation.app_version}` : 'Version not reported'}</span>
         <span>Created {formatDate(installation.created_at)}</span>
       </div>
       <div style={styles.installationLastSeen}>Last seen {formatDateTime(installation.last_seen_at)}</div>
@@ -851,8 +851,8 @@ function RecordListCard({
               {record.usable_for_training ? 'Usable' : 'Excluded'}
             </span>
           </div>
-          <h3 style={styles.recordTitle}>{record.payload?.input?.product_name_original ?? 'Unknown product'}</h3>
-          <p style={styles.recordSubtitle}>{record.payload?.input?.brand_original ?? 'Unknown brand'}</p>
+          <h3 style={styles.recordTitle}>{record.payload?.input?.product_name_original ?? 'Unnamed product'}</h3>
+          <p style={styles.recordSubtitle}>{record.payload?.input?.brand_original ?? 'Brand not provided'}</p>
         </div>
         <div style={styles.recordDateBlock}>
           <strong style={styles.inlineMetaStrong}>{formatDate(record.created_at)}</strong>
@@ -861,17 +861,17 @@ function RecordListCard({
       </div>
 
       <div style={styles.recordFactsGrid}>
-        <FactItem label="Category" value={record.payload?.input?.category_english ?? 'Unknown'} />
-        <FactItem label="Origin" value={record.payload?.input?.origin_country_english ?? 'Unknown'} />
-        <FactItem label="Platform" value={record.platform ?? 'Unknown'} />
-        <FactItem label="Route" value={record.route_type ?? 'Unknown'} />
+        <FactItem label="Category" value={record.payload?.input?.category_english ?? 'Not provided'} />
+        <FactItem label="Origin" value={record.payload?.input?.origin_country_english ?? 'Not provided'} />
+        <FactItem label="Platform" value={record.platform ?? 'Unspecified'} />
+        <FactItem label="Route" value={record.route_type ?? 'Unspecified'} />
         <FactItem label="Installation" value={truncateMiddle(record.installation_id, 18)} />
-        <FactItem label="Barcode" value={record.payload?.input?.barcode ?? 'Unavailable'} />
+        <FactItem label="Barcode" value={record.payload?.input?.barcode ?? 'Not available'} />
       </div>
 
       <div style={styles.recordCardFooter}>
         <div style={styles.recordDecisionLine}>
-          {record.payload?.teacher_result?.overall_line ?? 'No teacher decision line available.'}
+          {record.payload?.teacher_result?.overall_line ?? 'No decision summary provided.'}
         </div>
         <div style={styles.actionRow}>
           <button type="button" style={styles.actionButton} onClick={onSelect}>
