@@ -136,6 +136,7 @@ export function App() {
   const [bulkUpdating, setBulkUpdating] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [lastExportBatchId, setLastExportBatchId] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<'overview' | 'teacher' | 'input' | 'payload'>('overview')
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -291,8 +292,8 @@ export function App() {
   }, [recordQuery, routeFilter, statusFilter, trainingFilter, distillationFilter, platformFilter, categoryFilter])
 
   const selectedRecord = useMemo(
-    () => records.find((record) => record.id === selectedRecordId) ?? filteredRecords[0] ?? null,
-    [filteredRecords, records, selectedRecordId],
+    () => records.find((record) => record.id === selectedRecordId) ?? null,
+    [records, selectedRecordId],
   )
 
   const chartData = useMemo(() => {
@@ -855,10 +856,13 @@ export function App() {
                   <RecordListCard
                     key={item.id}
                     record={item}
-                    selected={selectedRecord?.id === item.id}
+                    selected={selectedRecordId === item.id}
                     updating={updatingRecordId === item.id}
                     deleting={deletingRecordId === item.id}
-                    onSelect={() => setSelectedRecordId(item.id)}
+                    onSelect={() => {
+                      setSelectedRecordId(item.id)
+                      setDetailTab('overview')
+                    }}
                     onApprove={() => void updateDistillationStatus([item.id], 'approved_for_distillation')}
                     onExclude={() => void updateDistillationStatus([item.id], 'excluded', { excludedReason: 'Excluded from record card action' })}
                     onDelete={() => void deleteRecord(item.id)}
@@ -895,125 +899,175 @@ export function App() {
                 </button>
               </div>
             </div>
-
-            <section style={styles.detailSectionShell}>
-              <div style={styles.detailRailHeader}>
-                <div>
-                  <h3 style={styles.detailRailTitle}>Record details</h3>
-                  <p style={styles.detailRailSubtitle}>
-                    Expanded full-width review panel for the currently selected teacher payload.
-                  </p>
-                </div>
-                {selectedRecord ? <span style={styles.badge}>#{selectedRecord.id}</span> : null}
-              </div>
-
-              {selectedRecord ? (
-                <>
-                  <div style={styles.detailSummaryStrip}>
-                    <SummaryFact label="Status" value={displayStatus(selectedRecord.overall_status)} />
-                    <SummaryFact label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
-                    <SummaryFact label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible' : 'Excluded'} />
-                    <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
-                    <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
-                    <SummaryFact label="Created" value={formatDateTime(selectedRecord.created_at)} />
-                    <SummaryFact label="Installation" value={selectedRecord.installation_id} />
-                  </div>
-
-                  <div style={styles.detailGrid}>
-                    <DetailSection title="Record Summary">
-                      <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
-                      <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
-                      <DetailRow label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
-                      <DetailRow label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible for training' : 'Excluded from training'} />
-                      <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not exported yet'} />
-                      <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
-                    </DetailSection>
-
-                    <DetailSection title="Platform Snapshot">
-                      <DetailRow label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
-                      <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
-                      <DetailRow label="Installation" value={selectedRecord.installation_id} multiline />
-                    </DetailSection>
-
-                    <DetailSection title="Input Snapshot" fullWidth>
-                      <DetailRow label="Product" value={selectedRecord.payload?.input?.product_name_original ?? 'Not provided'} />
-                      <DetailRow label="Brand" value={selectedRecord.payload?.input?.brand_original ?? 'Not provided'} />
-                      <DetailRow label="Category" value={selectedRecord.payload?.input?.category_english ?? 'Not provided'} />
-                      <DetailRow label="Origin" value={selectedRecord.payload?.input?.origin_country_english ?? 'Not provided'} />
-                      <DetailRow label="Barcode" value={selectedRecord.payload?.input?.barcode ?? 'Not available'} />
-                      <DetailRow label="Ingredients" value={joinList(selectedRecord.payload?.input?.ingredients_english)} multiline />
-                      <DetailRow label="Additives" value={joinList(selectedRecord.payload?.input?.additives_english)} multiline />
-                      <DetailRow label="Allergens" value={joinList(selectedRecord.payload?.input?.allergens_english)} multiline />
-                    </DetailSection>
-
-                    <DetailSection title="Teacher Output" fullWidth>
-                      <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'unknown')} />
-                      <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'No decision summary provided'} multiline />
-                      <DetailRow label="Ran evaluations" value={joinList(selectedRecord.payload?.teacher_result?.ran_evaluations)} multiline />
-                      <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
-                      <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
-                    </DetailSection>
-
-                    <DetailSection title="Record actions" fullWidth>
-                      <div style={styles.detailActionRow}>
-                        <button
-                          type="button"
-                          style={styles.actionButtonPositive}
-                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'approved_for_distillation')}
-                          disabled={bulkUpdating}
-                        >
-                          Approve for distillation
-                        </button>
-                        <button
-                          type="button"
-                          style={styles.actionButtonMuted}
-                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'excluded', { excludedReason: 'Excluded from detail panel action' })}
-                          disabled={bulkUpdating}
-                        >
-                          Exclude from distillation
-                        </button>
-                        <button
-                          type="button"
-                          style={styles.actionButton}
-                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'used_in_training', { distillationBatchId: selectedRecord.distillation_batch_id ?? lastExportBatchId ?? undefined })}
-                          disabled={bulkUpdating}
-                        >
-                          Mark as used in training
-                        </button>
-                        <button
-                          type="button"
-                          style={styles.actionButton}
-                          onClick={() => void updateDistillationStatus([selectedRecord.id], 'archived', { distillationBatchId: selectedRecord.distillation_batch_id ?? undefined })}
-                          disabled={bulkUpdating}
-                        >
-                          Archive
-                        </button>
-                        <button
-                          type="button"
-                          style={styles.actionButtonDanger}
-                          onClick={() => void deleteRecord(selectedRecord.id)}
-                          disabled={deletingRecordId === selectedRecord.id}
-                        >
-                          {deletingRecordId === selectedRecord.id ? 'Deleting...' : 'Delete record'}
-                        </button>
-                      </div>
-                    </DetailSection>
-
-                    <DetailSection title="Raw Payload JSON" fullWidth>
-                      <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre>
-                    </DetailSection>
-                  </div>
-                </>
-              ) : (
-                <div style={styles.emptyStateCard}>
-                  <h3 style={styles.emptyStateTitle}>No record selected</h3>
-                  <p style={styles.emptyPanelText}>Select a record to inspect its structured teacher payload.</p>
-                </div>
-              )}
-            </section>
           </article>
         </section>
       </section>
+
+      {selectedRecord ? (
+        <div style={styles.detailDrawerBackdrop} onClick={() => setSelectedRecordId(null)}>
+          <aside
+            style={styles.detailDrawer}
+            onClick={(event) => event.stopPropagation()}
+            aria-label={`Record details for record ${selectedRecord.id}`}
+          >
+            <div style={styles.detailDrawerHeader}>
+              <div style={styles.detailDrawerTitleBlock}>
+                <div style={styles.recordIdRow}>
+                  <span style={styles.inlineMetaLabel}>#{selectedRecord.id}</span>
+                  <span style={statusPillStyle(selectedRecord.overall_status)}>{displayStatus(selectedRecord.overall_status)}</span>
+                  <span style={distillationStatusStyle(selectedRecord.distillation_status)}>
+                    {displayDistillationStatus(selectedRecord.distillation_status)}
+                  </span>
+                </div>
+                <h2 style={styles.detailDrawerTitle}>
+                  {selectedRecord.payload?.input?.product_name_original ?? 'Unnamed product'}
+                </h2>
+                <p style={styles.detailDrawerSubtitle}>
+                  {selectedRecord.payload?.input?.brand_original ?? 'Brand not provided'} · {formatDateTime(selectedRecord.created_at)}
+                </p>
+              </div>
+              <button type="button" style={styles.drawerCloseButton} onClick={() => setSelectedRecordId(null)}>
+                Close
+              </button>
+            </div>
+
+            <div style={styles.detailSummaryStrip}>
+              <SummaryFact label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
+              <SummaryFact label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible' : 'Excluded'} />
+              <SummaryFact label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
+              <SummaryFact label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
+              <SummaryFact label="Installation" value={selectedRecord.installation_id} />
+              <SummaryFact label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not exported yet'} />
+            </div>
+
+            <section style={styles.detailActionsPanel}>
+              <div>
+                <h3 style={styles.bulkActionsTitle}>Record actions</h3>
+                <p style={styles.bulkActionsSubtitle}>These actions apply only to the currently opened record.</p>
+              </div>
+              <div style={styles.detailActionRow}>
+                <button
+                  type="button"
+                  style={styles.actionButtonPositive}
+                  onClick={() => void updateDistillationStatus([selectedRecord.id], 'approved_for_distillation')}
+                  disabled={bulkUpdating}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButtonMuted}
+                  onClick={() => void updateDistillationStatus([selectedRecord.id], 'excluded', { excludedReason: 'Excluded from detail drawer action' })}
+                  disabled={bulkUpdating}
+                >
+                  Exclude
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => void updateDistillationStatus([selectedRecord.id], 'used_in_training', { distillationBatchId: selectedRecord.distillation_batch_id ?? lastExportBatchId ?? undefined })}
+                  disabled={bulkUpdating}
+                >
+                  Mark used in training
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButton}
+                  onClick={() => void updateDistillationStatus([selectedRecord.id], 'archived', { distillationBatchId: selectedRecord.distillation_batch_id ?? undefined })}
+                  disabled={bulkUpdating}
+                >
+                  Archive
+                </button>
+                <button
+                  type="button"
+                  style={styles.actionButtonDanger}
+                  onClick={() => void deleteRecord(selectedRecord.id)}
+                  disabled={deletingRecordId === selectedRecord.id}
+                >
+                  {deletingRecordId === selectedRecord.id ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </section>
+
+            <div style={styles.detailTabRow}>
+              <DrawerTabButton label="Overview" active={detailTab === 'overview'} onClick={() => setDetailTab('overview')} />
+              <DrawerTabButton label="Teacher Output" active={detailTab === 'teacher'} onClick={() => setDetailTab('teacher')} />
+              <DrawerTabButton label="Input Data" active={detailTab === 'input'} onClick={() => setDetailTab('input')} />
+              <DrawerTabButton label="Payload" active={detailTab === 'payload'} onClick={() => setDetailTab('payload')} />
+            </div>
+
+            <div style={styles.detailDrawerBody}>
+              {detailTab === 'overview' ? (
+                <div style={styles.detailGrid}>
+                  <DetailSection title="Record Summary">
+                    <DetailRow label="Record ID" value={`#${selectedRecord.id}`} />
+                    <DetailRow label="Schema version" value={selectedRecord.schema_version == null ? 'Not available' : String(selectedRecord.schema_version)} />
+                    <DetailRow label="Lifecycle stage" value={displayDistillationStatus(selectedRecord.distillation_status)} />
+                    <DetailRow label="Training flag" value={selectedRecord.usable_for_training ? 'Eligible for training' : 'Excluded from training'} />
+                    <DetailRow label="Reviewed at" value={selectedRecord.reviewed_at ? formatDateTime(selectedRecord.reviewed_at) : 'Not reviewed yet'} />
+                    <DetailRow label="Exported at" value={selectedRecord.exported_at ? formatDateTime(selectedRecord.exported_at) : 'Not exported yet'} />
+                  </DetailSection>
+
+                  <DetailSection title="Platform Snapshot">
+                    <DetailRow label="Platform" value={selectedRecord.platform ?? 'Unspecified'} />
+                    <DetailRow label="Route" value={selectedRecord.route_type ?? 'Unspecified'} />
+                    <DetailRow label="Installation" value={selectedRecord.installation_id} multiline />
+                    <DetailRow label="Most common platforms" value={topPlatforms.map(([name, count]) => `${name} (${count})`).join(', ') || 'No platform data yet'} multiline />
+                  </DetailSection>
+
+                  <DetailSection title="Distillation Timeline" fullWidth>
+                    <DetailRow label="Ready for export" value={selectedRecord.distillation_status === 'approved_for_distillation' ? 'Yes' : 'No'} />
+                    <DetailRow label="Distillation batch" value={selectedRecord.distillation_batch_id ?? 'Not assigned yet'} />
+                    <DetailRow label="Used in training at" value={selectedRecord.used_in_training_at ? formatDateTime(selectedRecord.used_in_training_at) : 'Not used yet'} />
+                    <DetailRow label="Excluded reason" value={selectedRecord.excluded_reason ?? 'No exclusion reason recorded'} multiline />
+                  </DetailSection>
+                </div>
+              ) : null}
+
+              {detailTab === 'teacher' ? (
+                <div style={styles.detailGrid}>
+                  <DetailSection title="Teacher Output" fullWidth>
+                    <DetailRow label="Overall status" value={displayStatus(selectedRecord.payload?.teacher_result?.overall_status ?? 'unknown')} />
+                    <DetailRow label="Decision line" value={selectedRecord.payload?.teacher_result?.overall_line ?? 'No decision summary provided'} multiline />
+                    <DetailRow label="Ran evaluations" value={joinList(selectedRecord.payload?.teacher_result?.ran_evaluations)} multiline />
+                    <DetailRow label="Excluded domains" value={joinList(selectedRecord.payload?.metadata?.excluded_domains)} multiline />
+                    <DetailRow label="Market country" value={selectedRecord.payload?.metadata?.market_country ?? 'Not available'} />
+                  </DetailSection>
+                </div>
+              ) : null}
+
+              {detailTab === 'input' ? (
+                <div style={styles.detailGrid}>
+                  <DetailSection title="Input Snapshot" fullWidth>
+                    <DetailRow label="Product" value={selectedRecord.payload?.input?.product_name_original ?? 'Not provided'} />
+                    <DetailRow label="Brand" value={selectedRecord.payload?.input?.brand_original ?? 'Not provided'} />
+                    <DetailRow label="Category" value={selectedRecord.payload?.input?.category_english ?? 'Not provided'} />
+                    <DetailRow label="Origin" value={selectedRecord.payload?.input?.origin_country_english ?? 'Not provided'} />
+                    <DetailRow label="Barcode" value={selectedRecord.payload?.input?.barcode ?? 'Not available'} />
+                    <DetailRow label="Ingredients" value={joinList(selectedRecord.payload?.input?.ingredients_english)} multiline />
+                    <DetailRow label="Additives" value={joinList(selectedRecord.payload?.input?.additives_english)} multiline />
+                    <DetailRow label="Allergens" value={joinList(selectedRecord.payload?.input?.allergens_english)} multiline />
+                  </DetailSection>
+                </div>
+              ) : null}
+
+              {detailTab === 'payload' ? (
+                <div style={styles.detailGrid}>
+                  <DetailSection title="Payload Overview" fullWidth>
+                    <DetailRow label="Payload schema version" value={selectedRecord.payload?.schema_version == null ? 'Not available' : String(selectedRecord.payload.schema_version)} />
+                    <DetailRow label="Recorded at epoch ms" value={selectedRecord.payload?.created_at_epoch_ms == null ? 'Not available' : String(selectedRecord.payload.created_at_epoch_ms)} />
+                    <DetailRow label="Preference keys" value={Object.keys(selectedRecord.payload?.preferences ?? {}).join(', ') || 'No preference payload recorded'} multiline />
+                    <DetailRow label="Metadata fields" value={Object.keys(selectedRecord.payload?.metadata ?? {}).join(', ') || 'No metadata fields recorded'} multiline />
+                  </DetailSection>
+                  <DetailSection title="Raw Payload JSON" fullWidth>
+                    <pre style={styles.jsonBlock}>{JSON.stringify(selectedRecord.payload, null, 2)}</pre>
+                  </DetailSection>
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        </div>
+      ) : null}
     </main>
   )
 }
@@ -1059,6 +1113,29 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
       <p style={styles.chartSubtitle}>{subtitle}</p>
       {children}
     </article>
+  )
+}
+
+function DrawerTabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      style={{
+        ...styles.detailTabButton,
+        ...(active ? styles.detailTabButtonActive : null),
+      }}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   )
 }
 
@@ -1172,7 +1249,7 @@ function RecordListCard({
         </div>
         <div style={styles.actionRow}>
           <button type="button" style={styles.actionButton} onClick={onSelect}>
-            Inspect
+            Open details
           </button>
           <button
             type="button"
@@ -1185,26 +1262,16 @@ function RecordListCard({
           >
             Approve
           </button>
-          <button
-            type="button"
-            style={styles.actionButtonMuted}
-            onClick={(event) => {
-              event.stopPropagation()
-              onExclude()
-            }}
-            disabled={updating || deleting}
-          >
+          <button type="button" style={styles.inlineGhostButton} onClick={(event) => {
+            event.stopPropagation()
+            onExclude()
+          }} disabled={updating || deleting}>
             Exclude
           </button>
-          <button
-            type="button"
-            style={styles.actionButtonDanger}
-            onClick={(event) => {
-              event.stopPropagation()
-              onDelete()
-            }}
-            disabled={deleting}
-          >
+          <button type="button" style={styles.inlineGhostButton} onClick={(event) => {
+            event.stopPropagation()
+            onDelete()
+          }} disabled={deleting}>
             {deleting ? 'Deleting...' : 'Delete'}
           </button>
         </div>
@@ -2077,6 +2144,14 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     cursor: 'pointer',
   },
+  inlineGhostButton: {
+    border: 'none',
+    background: 'transparent',
+    color: '#62786a',
+    padding: '8px 4px',
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
   statusPill: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -2105,6 +2180,97 @@ const styles: Record<string, CSSProperties> = {
     padding: '5px 10px',
     fontSize: '12px',
     fontWeight: 800,
+  },
+  detailDrawerBackdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(16, 31, 24, 0.36)',
+    backdropFilter: 'blur(6px)',
+    display: 'flex',
+    justifyContent: 'flex-end',
+    zIndex: 80,
+    padding: '20px',
+    boxSizing: 'border-box',
+  },
+  detailDrawer: {
+    width: 'min(860px, 100%)',
+    height: '100%',
+    borderRadius: '28px',
+    background: 'linear-gradient(180deg, #fcfffd 0%, #f5faf6 100%)',
+    border: '1px solid #dce7dd',
+    boxShadow: '0 28px 64px rgba(15, 34, 25, 0.24)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  detailDrawerHeader: {
+    padding: '24px 24px 18px',
+    borderBottom: '1px solid #e1ebe4',
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '16px',
+    alignItems: 'flex-start',
+  },
+  detailDrawerTitleBlock: {
+    minWidth: 0,
+  },
+  detailDrawerTitle: {
+    margin: 0,
+    fontSize: '30px',
+    lineHeight: 1.05,
+    color: '#173425',
+  },
+  detailDrawerSubtitle: {
+    margin: '8px 0 0',
+    color: '#62786b',
+    fontSize: '14px',
+    lineHeight: 1.5,
+  },
+  drawerCloseButton: {
+    border: '1px solid #d6e2d8',
+    background: '#fff',
+    color: '#274634',
+    borderRadius: '999px',
+    padding: '10px 14px',
+    fontWeight: 800,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  detailActionsPanel: {
+    padding: '0 24px 18px',
+    borderBottom: '1px solid #e1ebe4',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  detailTabRow: {
+    padding: '16px 24px',
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+    borderBottom: '1px solid #e1ebe4',
+    background: 'rgba(250, 253, 251, 0.9)',
+  },
+  detailTabButton: {
+    border: '1px solid #d6e2d8',
+    background: '#fff',
+    color: '#476355',
+    borderRadius: '999px',
+    padding: '10px 14px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  detailTabButtonActive: {
+    border: '1px solid #24553e',
+    background: '#173f2d',
+    color: '#ffffff',
+  },
+  detailDrawerBody: {
+    padding: '20px 24px 24px',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
   },
   detailSectionShell: {
     marginTop: '18px',
