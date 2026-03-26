@@ -218,6 +218,9 @@ export function App() {
   const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
+  const [selectedColabJobId, setSelectedColabJobId] = useState<number | null>(null)
+  const [copyingColabCommand, setCopyingColabCommand] = useState(false)
+  const [colabCommandCopied, setColabCommandCopied] = useState(false)
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
@@ -514,6 +517,20 @@ export function App() {
   const readyBatchCount = exportBatches.filter((batch) => batch.ready_for_training).length
   const activeJobCount = distillationJobs.filter((job) => ['queued', 'preparing_dataset', 'training', 'evaluating'].includes(job.status)).length
   const readyModelCount = modelVersions.filter((version) => version.status === 'ready_for_test').length
+  const colabJob = useMemo(
+    () => distillationJobs.find((job) => job.id === selectedColabJobId) ?? distillationJobs.find((job) => job.status === 'queued') ?? distillationJobs[0] ?? null,
+    [distillationJobs, selectedColabJobId],
+  )
+  const colabCommand = useMemo(() => {
+    if (!colabJob) return ''
+    return `python scripts/colab_train_batch.py \\
+  --server-url ${API_BASE.replace(/\/api$/, '')} \\
+  --job-id ${colabJob.id} \\
+  --batch-id ${colabJob.batch_id} \\
+  --output-dir /content/label_wise_artifacts/${colabJob.batch_id} \\
+  --base-model Qwen/Qwen2.5-3B-Instruct \\
+  --backend hf_peft_seqcls`
+  }, [colabJob])
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -796,11 +813,57 @@ export function App() {
     }
   }
 
+  async function copyColabCommand() {
+    if (!colabCommand) return
+    setCopyingColabCommand(true)
+    setColabCommandCopied(false)
+    try {
+      await navigator.clipboard.writeText(colabCommand)
+      setColabCommandCopied(true)
+      window.setTimeout(() => setColabCommandCopied(false), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy Colab command')
+    } finally {
+      setCopyingColabCommand(false)
+    }
+  }
+
+  async function openInColab(jobId: number) {
+    const job = distillationJobs.find((item) => item.id === jobId)
+    if (!job || job.status !== 'queued') return
+    setSelectedColabJobId(jobId)
+
+    const nextCommand = `python scripts/colab_train_batch.py \\
+  --server-url ${API_BASE.replace(/\/api$/, '')} \\
+  --job-id ${job.id} \\
+  --batch-id ${job.batch_id} \\
+  --output-dir /content/label_wise_artifacts/${job.batch_id} \\
+  --base-model Qwen/Qwen2.5-3B-Instruct \\
+  --backend hf_peft_seqcls`
+
+    try {
+      await navigator.clipboard.writeText(nextCommand)
+      setColabCommandCopied(true)
+      window.setTimeout(() => setColabCommandCopied(false), 1800)
+    } catch {
+      // Ignore clipboard failure here; the command stays visible in the helper panel.
+    }
+
+    window.open('https://colab.new/', '_blank', 'noopener,noreferrer')
+  }
+
   const activeFilterCount = [routeFilter, statusFilter, trainingFilter, platformFilter, categoryFilter].filter(
     (value) => value !== 'all',
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
   const distillationPreview = selectedRecord ? buildDistillationExportPreview(selectedRecord) : null
   const activeModelVersion = modelVersions.find((version) => version.status === 'active_test') ?? null
+
+  function openCurationWorkspace() {
+    if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
+      setDistillationFilter('all')
+    }
+    setActiveWorkspace('curation')
+  }
 
   if (selectedRecord) {
     return (
@@ -1070,9 +1133,9 @@ export function App() {
           subtitle={`Safe / warning / unsafe${overview.cannotAssessRecords > 0 ? ` (+${overview.cannotAssessRecords} cannot assess)` : ''}`}
         />
       </section>
-      <section style={styles.workspaceNav}>
+      <section style={styles.workspaceNav} role="tablist" aria-label="Dashboard workspaces">
         <WorkspaceTabButton label="Overview" active={activeWorkspace === 'overview'} onClick={() => setActiveWorkspace('overview')} />
-        <WorkspaceTabButton label="Curation" active={activeWorkspace === 'curation'} onClick={() => setActiveWorkspace('curation')} />
+        <WorkspaceTabButton label="Curation" active={activeWorkspace === 'curation'} onClick={openCurationWorkspace} />
         <WorkspaceTabButton label="Training" active={activeWorkspace === 'training'} onClick={() => setActiveWorkspace('training')} />
       </section>
 
@@ -1124,7 +1187,7 @@ export function App() {
                     }}
                     onClick={() => {
                       setDistillationFilter(distillationFilter === stage.key ? 'all' : stage.key)
-                      setActiveWorkspace('curation')
+                      openCurationWorkspace()
                     }}
                   >
                     <span style={styles.pipelineStageLabel}>{stage.label}</span>
@@ -1345,6 +1408,16 @@ export function App() {
                           {job.progress_stage}
                           {job.error_message ? ` · ${job.error_message}` : ''}
                         </span>
+                        <div style={styles.actionRow}>
+                          <button
+                            type="button"
+                            style={styles.actionButton}
+                            onClick={() => void openInColab(job.id)}
+                            disabled={job.status !== 'queued'}
+                          >
+                            {job.status === 'completed' ? 'Completed in Colab' : job.status === 'queued' ? 'Open in Colab' : 'Colab unavailable'}
+                          </button>
+                        </div>
                       </div>
                       {job.logs_json && job.logs_json.length > 0 ? (
                         <div style={styles.jobMetricsBox}>
@@ -1465,6 +1538,42 @@ export function App() {
                     </article>
                   ))}
                 </div>
+                {colabJob ? (
+                  <div style={styles.colabPanel}>
+                    <div style={styles.pipelinePanelHeader}>
+                      <div>
+                        <h3 style={styles.cardTitle}>Colab Training Handoff</h3>
+                        <p style={styles.cardSubtitle}>
+                          Use this when training is manual. Open a fresh Colab notebook from a queued job, paste the copied command, and let Colab report completion back to the server.
+                        </p>
+                      </div>
+                      <span style={styles.batchBadge}>Job #{colabJob.id}</span>
+                    </div>
+                    <div style={styles.colabMetaRow}>
+                      <span style={styles.miniStatusMuted}>Batch {colabJob.batch_id}</span>
+                      <span style={styles.miniStatusMuted}>Train {colabJob.train_record_count ?? 0}</span>
+                      <span style={styles.miniStatusMuted}>Validation {colabJob.validation_record_count ?? 0}</span>
+                      <span style={colabJob.status === 'completed' ? styles.batchUsedPill : colabJob.status === 'queued' ? styles.batchReadyPill : styles.miniStatusWarning}>{colabJob.status}</span>
+                    </div>
+                    <div style={styles.colabSteps}>
+                      <span>1. Open a GPU-backed Colab notebook only for a queued job.</span>
+                      <span>2. Clone `label_wise_server` and install the training dependencies.</span>
+                      <span>3. Paste the command below so Colab can train and report completion back to this job.</span>
+                    </div>
+                    <pre style={styles.colabCodeBlock}>{colabCommand}</pre>
+                    <div style={styles.batchActions}>
+                      <button type="button" style={styles.actionButton} onClick={() => void copyColabCommand()} disabled={copyingColabCommand}>
+                        {copyingColabCommand ? 'Copying...' : colabCommandCopied ? 'Copied' : 'Copy command'}
+                      </button>
+                      <button type="button" style={styles.actionButton} onClick={() => void openInColab(colabJob.id)} disabled={colabJob.status !== 'queued'}>
+                        {colabJob.status === 'queued' ? 'Open Colab' : 'Job already started'}
+                      </button>
+                      <button type="button" style={styles.actionButton} onClick={() => void downloadTrainingExport(colabJob.batch_id)} disabled={downloadingBatchId === colabJob.batch_id}>
+                        {downloadingBatchId === colabJob.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div style={styles.paginationBar}>
                   <span style={styles.paginationMeta}>
                     Page {batchesPage} of {batchTotalPages} · Showing {currentBatchStart}-{currentBatchEnd} of {totalBatchCount}
@@ -1760,6 +1869,8 @@ function WorkspaceTabButton({
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       style={{
         ...styles.workspaceTab,
         ...(active ? styles.workspaceTabActive : null),
@@ -2390,24 +2501,28 @@ const styles: Record<string, CSSProperties> = {
   },
   workspaceNav: {
     display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap',
-    marginBottom: '20px',
+    gap: '0',
+    flexWrap: 'nowrap',
+    marginBottom: '24px',
+    borderBottom: '1px solid #d9e5dc',
+    overflowX: 'auto',
   },
   workspaceTab: {
-    border: '1px solid #d4e0d6',
-    background: 'rgba(255,255,255,0.78)',
-    color: '#2a4d39',
-    padding: '12px 16px',
-    borderRadius: '999px',
+    border: 'none',
+    borderBottom: '3px solid transparent',
+    background: 'transparent',
+    color: '#617466',
+    padding: '14px 18px 13px',
+    borderRadius: 0,
     fontWeight: 800,
     cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    marginBottom: '-1px',
   },
   workspaceTabActive: {
-    background: '#173f2d',
-    color: '#ffffff',
-    borderColor: '#173f2d',
-    boxShadow: '0 10px 20px rgba(23, 63, 45, 0.16)',
+    color: '#173f2d',
+    borderBottomColor: '#173f2d',
+    boxShadow: 'inset 0 -1px 0 #173f2d',
   },
   overviewGrid: {
     display: 'grid',
@@ -2654,6 +2769,14 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     gap: '8px',
     flexWrap: 'wrap',
+  },
+  colabSteps: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    color: '#516557',
+    fontSize: '13px',
+    lineHeight: 1.5,
   },
   colabCodeBlock: {
     margin: 0,
