@@ -98,14 +98,6 @@ type ModelVersionListResponse = {
   has_more: boolean
 }
 
-type StudentInferenceResponse = {
-  model_version_id: number
-  model_name: string
-  overall_status: string
-  decision_line: string
-  confidence: number
-}
-
 type RecordPayload = {
   schema_version?: number
   created_at_epoch_ms?: number
@@ -208,6 +200,7 @@ export function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
+  const [activeWorkspace, setActiveWorkspace] = useState<'overview' | 'curation' | 'training'>('overview')
   const [installationQuery, setInstallationQuery] = useState('')
   const [recordQuery, setRecordQuery] = useState('')
   const [routeFilter, setRouteFilter] = useState<FilterOption>('all')
@@ -225,14 +218,9 @@ export function App() {
   const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
-  const [selectedColabBatchId, setSelectedColabBatchId] = useState<string | null>(null)
-  const [copyingColabCommand, setCopyingColabCommand] = useState(false)
-  const [colabCommandCopied, setColabCommandCopied] = useState(false)
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
-  const [testingInference, setTestingInference] = useState(false)
-  const [inferenceResult, setInferenceResult] = useState<StudentInferenceResponse | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -523,20 +511,9 @@ export function App() {
   const currentJobEnd = totalJobCount === 0 ? 0 : currentJobStart + distillationJobs.length - 1
   const currentModelVersionStart = totalModelVersionCount === 0 ? 0 : (modelVersionsPage - 1) * MODEL_VERSIONS_PAGE_SIZE + 1
   const currentModelVersionEnd = totalModelVersionCount === 0 ? 0 : currentModelVersionStart + modelVersions.length - 1
-  const colabBatch = useMemo(
-    () => exportBatches.find((batch) => batch.batch_id === selectedColabBatchId) ?? exportBatches[0] ?? null,
-    [exportBatches, selectedColabBatchId],
-  )
-  const colabCommand = useMemo(() => {
-    if (!colabBatch) return ''
-    return `python scripts/colab_train_batch.py \\
-  --server-url ${API_BASE.replace(/\/api$/, '')} \\
-  --batch-id ${colabBatch.batch_id} \\
-  --output-dir /content/label_wise_artifacts/${colabBatch.batch_id} \\
-  --base-model Qwen/Qwen2.5-3B-Instruct \\
-  --backend hf_peft_seqcls`
-  }, [colabBatch])
-
+  const readyBatchCount = exportBatches.filter((batch) => batch.ready_for_training).length
+  const activeJobCount = distillationJobs.filter((job) => ['queued', 'preparing_dataset', 'training', 'evaluating'].includes(job.status)).length
+  const readyModelCount = modelVersions.filter((version) => version.status === 'ready_for_test').length
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -748,7 +725,7 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           batch_id: batchId,
-          base_model: '3B hosted SLM',
+          base_model: 'Qwen/Qwen2.5-3B-Instruct',
           task_type: 'overall_status_classification',
           dataset_mode: 'single_batch',
         }),
@@ -796,21 +773,6 @@ export function App() {
     }
   }
 
-  async function copyColabCommand() {
-    if (!colabCommand) return
-    setCopyingColabCommand(true)
-    setColabCommandCopied(false)
-    try {
-      await navigator.clipboard.writeText(colabCommand)
-      setColabCommandCopied(true)
-      window.setTimeout(() => setColabCommandCopied(false), 1800)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to copy Colab command')
-    } finally {
-      setCopyingColabCommand(false)
-    }
-  }
-
   async function updateModelVersionStatus(versionId: number, nextStatus: 'active_test' | 'ready_for_test' | 'archived') {
     setUpdatingModelVersionId(versionId)
     setError(null)
@@ -831,42 +793,6 @@ export function App() {
       setError(err instanceof Error ? err.message : 'Failed to update model version status')
     } finally {
       setUpdatingModelVersionId(null)
-    }
-  }
-
-  async function runStudentInferenceTest() {
-    if (!activeModelVersion) return
-    setTestingInference(true)
-    setError(null)
-    try {
-      const response = await fetch(`${API_BASE}/student-inference/predict`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          input: {
-            product_name: 'Olive oil',
-            brand: 'Primadonna',
-            category: 'fats',
-            ingredients: ['olive oil'],
-          },
-          preferences: {
-            religion: { enabled: true },
-            ethical: { enabled: true },
-          },
-        }),
-      })
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        throw new Error(payload?.detail ?? 'Failed to run student inference test')
-      }
-
-      const data = (await response.json()) as StudentInferenceResponse
-      setInferenceResult(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to run student inference test')
-    } finally {
-      setTestingInference(false)
     }
   }
 
@@ -1144,434 +1070,436 @@ export function App() {
           subtitle={`Safe / warning / unsafe${overview.cannotAssessRecords > 0 ? ` (+${overview.cannotAssessRecords} cannot assess)` : ''}`}
         />
       </section>
+      <section style={styles.workspaceNav}>
+        <WorkspaceTabButton label="Overview" active={activeWorkspace === 'overview'} onClick={() => setActiveWorkspace('overview')} />
+        <WorkspaceTabButton label="Curation" active={activeWorkspace === 'curation'} onClick={() => setActiveWorkspace('curation')} />
+        <WorkspaceTabButton label="Training" active={activeWorkspace === 'training'} onClick={() => setActiveWorkspace('training')} />
+      </section>
 
-      <section style={styles.pipelinePanel}>
-        <div style={styles.pipelinePanelHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Active Test Model</h2>
-            <p style={styles.cardSubtitle}>
-              This marks the current test target for the future hosted SLM endpoint. Only one version can be active for testing at a time.
-            </p>
-          </div>
-          <span style={styles.batchBadge}>{activeModelVersion ? 'Configured' : 'Not set'}</span>
-        </div>
-        {activeModelVersion ? (
-          <article style={styles.batchCard}>
-            <div style={styles.batchCardTop}>
+      {activeWorkspace === 'overview' ? (
+        <>
+          <section style={styles.analyticsStrip}>
+            <ChartCard title="Status Distribution" subtitle="Current filtered outcome mix">
+              <HorizontalBarChart data={chartData.status} emptyLabel="No status data in current filter." />
+            </ChartCard>
+            <ChartCard title="Record source" subtitle="Barcode versus photo ingestion">
+              <HorizontalBarChart data={chartData.route} emptyLabel="No route data in current filter." />
+            </ChartCard>
+            <ChartCard title="Lifecycle overview" subtitle="Where the visible records sit in the review flow">
+              <HorizontalBarChart
+                data={[
+                  { label: 'Needs review', value: filteredRecords.filter((record) => record.distillation_status === 'pending_review').length, tone: 'slate' as const },
+                  { label: 'Ready to export', value: filteredRecords.filter((record) => record.distillation_status === 'approved_for_distillation').length, tone: 'green' as const },
+                  { label: 'Exported', value: filteredRecords.filter((record) => record.distillation_status === 'exported').length, tone: 'amber' as const },
+                  { label: 'Used in training', value: filteredRecords.filter((record) => record.distillation_status === 'used_in_training').length, tone: 'green' as const },
+                  { label: 'Excluded', value: filteredRecords.filter((record) => record.distillation_status === 'excluded').length, tone: 'red' as const },
+                ]}
+                emptyLabel="No lifecycle data in current filter."
+              />
+            </ChartCard>
+            <ChartCard title="Top Categories" subtitle="Most common visible categories">
+              <HorizontalBarChart data={chartData.categories} emptyLabel="No category data in current filter." />
+            </ChartCard>
+          </section>
+
+          <section style={styles.overviewGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Review Pipeline</h2>
+                  <p style={styles.cardSubtitle}>
+                    Track what has been reviewed, approved, exported, used in training, or archived. Click a stage to filter the record list.
+                  </p>
+                </div>
+                {lastExportBatchId ? <span style={styles.batchBadge}>Latest batch: {lastExportBatchId}</span> : null}
+              </div>
+              <div style={styles.pipelineStageGrid}>
+                {pipelineStages.map((stage) => (
+                  <button
+                    key={stage.key}
+                    type="button"
+                    style={{
+                      ...styles.pipelineStageCard,
+                      ...(distillationFilter === stage.key ? styles.pipelineStageCardActive : null),
+                    }}
+                    onClick={() => {
+                      setDistillationFilter(distillationFilter === stage.key ? 'all' : stage.key)
+                      setActiveWorkspace('curation')
+                    }}
+                  >
+                    <span style={styles.pipelineStageLabel}>{stage.label}</span>
+                    <strong style={styles.pipelineStageValue}>{stage.count}</strong>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Training Snapshot</h2>
+                  <p style={styles.cardSubtitle}>
+                    A compact view of what is ready for training, what is currently running, and which model is selected for testing.
+                  </p>
+                </div>
+              </div>
+              <div style={styles.trainingSnapshotGrid}>
+                <SummaryFact label="Ready batches" value={String(readyBatchCount)} />
+                <SummaryFact label="Active jobs" value={String(activeJobCount)} />
+                <SummaryFact label="Ready models" value={String(readyModelCount)} />
+                <SummaryFact label="Active model" value={activeModelVersion?.model_name ?? 'None selected'} />
+              </div>
+              <div style={styles.batchFooter}>
+                <span style={styles.batchFooterText}>
+                  Operational training controls now live in the Training workspace so this overview stays focused on signal, not process noise.
+                </span>
+                <button type="button" style={styles.actionButton} onClick={() => setActiveWorkspace('training')}>
+                  Open training workspace
+                </button>
+              </div>
+            </section>
+          </section>
+        </>
+      ) : null}
+
+      {activeWorkspace === 'training' ? (
+        <>
+          <section style={styles.trainingControlStrip}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Selected Test Model</h2>
+                  <p style={styles.cardSubtitle}>
+                    This is the currently selected model version for downstream testing. Use model versions below to change it.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>{activeModelVersion ? 'Selected' : 'Not set'}</span>
+              </div>
+              {activeModelVersion ? (
+                <div style={styles.batchMetaList}>
+                  <span>{activeModelVersion.model_name}</span>
+                  <span>Batch {activeModelVersion.batch_id}</span>
+                  <span>Base model {activeModelVersion.base_model}</span>
+                  <span>{activeModelVersion.activated_at ? `Activated ${formatDateTime(activeModelVersion.activated_at)}` : 'Activation time not available'}</span>
+                </div>
+              ) : (
+                <p style={styles.emptyPanelText}>No model version is selected for testing yet.</p>
+              )}
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Training Summary</h2>
+                  <p style={styles.cardSubtitle}>
+                    Focus on the three moving parts that matter: batches, jobs, and versions.
+                  </p>
+                </div>
+              </div>
+              <div style={styles.trainingSnapshotGrid}>
+                <SummaryFact label="Batches" value={String(totalBatchCount)} />
+                <SummaryFact label="Jobs" value={String(totalJobCount)} />
+                <SummaryFact label="Versions" value={String(totalModelVersionCount)} />
+                <SummaryFact label="Ready for test" value={String(readyModelCount)} />
+              </div>
+            </section>
+          </section>
+
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
               <div>
-                <p style={styles.factLabel}>Active version</p>
-                <h3 style={styles.batchCardTitle}>{activeModelVersion.model_name}</h3>
+                <h2 style={styles.cardTitle}>Model Versions</h2>
+                <p style={styles.cardSubtitle}>
+                  Trained artifacts available for comparison, activation, or archiving.
+                </p>
               </div>
-              <span style={styles.batchUsedPill}>active_test</span>
+              <span style={styles.batchBadge}>{totalModelVersionCount} versions</span>
             </div>
-            <div style={styles.batchMetaList}>
-              <span>Version #{activeModelVersion.id}</span>
-              <span>Batch {activeModelVersion.batch_id}</span>
-              <span>Base model {activeModelVersion.base_model}</span>
-              <span>{activeModelVersion.activated_at ? `Activated ${formatDateTime(activeModelVersion.activated_at)}` : 'Activation time not available'}</span>
-            </div>
-            <div style={styles.batchFooter}>
-              <span style={styles.batchFooterText}>
-                Simulated runtime contract for the future hosted SLM endpoint.
-              </span>
-              <button type="button" style={styles.actionButtonPositive} onClick={() => void runStudentInferenceTest()} disabled={testingInference}>
-                {testingInference ? 'Testing...' : 'Run test inference'}
-              </button>
-            </div>
-            {inferenceResult ? (
-              <div style={styles.jobMetricsBox}>
-                <span style={styles.jobMetricsTitle}>Latest inference response</span>
-                <span style={styles.jobMetricsText}>{JSON.stringify(inferenceResult)}</span>
-              </div>
-            ) : null}
-          </article>
-        ) : (
-          <div style={styles.emptyStateCard}>
-            <h3 style={styles.emptyStateTitle}>No active test model selected</h3>
-            <p style={styles.emptyPanelText}>Activate one ready version below to make the current testing target explicit.</p>
-          </div>
-        )}
-      </section>
-
-      <section style={styles.pipelinePanel}>
-        <div style={styles.pipelinePanelHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Distillation lifecycle</h2>
-            <p style={styles.cardSubtitle}>
-              Track what has been reviewed, approved, exported, used in training, or archived. Click a stage to filter the record list.
-            </p>
-          </div>
-          {lastExportBatchId ? <span style={styles.batchBadge}>Latest batch: {lastExportBatchId}</span> : null}
-        </div>
-        <div style={styles.pipelineStageGrid}>
-          {pipelineStages.map((stage) => (
-            <button
-              key={stage.key}
-              type="button"
-              style={{
-                ...styles.pipelineStageCard,
-                ...(distillationFilter === stage.key ? styles.pipelineStageCardActive : null),
-              }}
-              onClick={() => setDistillationFilter(distillationFilter === stage.key ? 'all' : stage.key)}
-            >
-              <span style={styles.pipelineStageLabel}>{stage.label}</span>
-              <strong style={styles.pipelineStageValue}>{stage.count}</strong>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section style={styles.pipelinePanel}>
-        <div style={styles.pipelinePanelHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Model Versions</h2>
-            <p style={styles.cardSubtitle}>
-              Completed jobs produce model-version artifacts. These versions are the future handoff point for hosted SLM testing and activation.
-            </p>
-          </div>
-          <span style={styles.batchBadge}>{totalModelVersionCount} versions</span>
-        </div>
-        {modelVersions.length > 0 ? (
-          <>
-            <div style={styles.batchGrid}>
-              {modelVersions.map((version) => (
-                <article key={version.id} style={styles.batchCard}>
-                  <div style={styles.batchCardTop}>
-                    <div>
-                      <p style={styles.factLabel}>Version #{version.id}</p>
-                      <h3 style={styles.batchCardTitle}>{version.model_name}</h3>
-                    </div>
-                    <span style={version.status === 'ready_for_test' ? styles.batchReadyPill : styles.batchUsedPill}>
-                      {version.status}
-                    </span>
-                  </div>
-                  <div style={styles.batchMetaList}>
-                    <span>Job {version.job_id}</span>
-                    <span>Batch {version.batch_id}</span>
-                    <span>Base model {version.base_model}</span>
-                    <span>Created {formatDateTime(version.created_at)}</span>
-                  </div>
-                  <div style={styles.batchFooter}>
-                    <span style={styles.batchFooterText}>
-                      {version.artifact_uri ?? 'No artifact URI yet'}
-                    </span>
-                    <div style={styles.actionRow}>
-                      <button
-                        type="button"
-                        style={styles.actionButtonPositive}
-                        disabled={updatingModelVersionId === version.id || version.status === 'active_test'}
-                        onClick={() => void updateModelVersionStatus(version.id, 'active_test')}
-                      >
-                        {updatingModelVersionId === version.id ? 'Saving...' : 'Activate for testing'}
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.actionButton}
-                        disabled={updatingModelVersionId === version.id || version.status === 'ready_for_test'}
-                        onClick={() => void updateModelVersionStatus(version.id, 'ready_for_test')}
-                      >
-                        Set ready
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.actionButtonMuted}
-                        disabled={updatingModelVersionId === version.id || version.status === 'archived'}
-                        onClick={() => void updateModelVersionStatus(version.id, 'archived')}
-                      >
-                        Archive
-                      </button>
-                    </div>
-                  </div>
-                  {version.metrics_json ? (
-                    <div style={styles.jobMetricsBox}>
-                      <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
-                      <span style={styles.jobMetricsText}>{JSON.stringify(version.metrics_json)}</span>
-                    </div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-            <div style={styles.paginationBar}>
-              <span style={styles.paginationMeta}>
-                Page {modelVersionsPage} of {modelVersionTotalPages} · Showing {currentModelVersionStart}-{currentModelVersionEnd} of {totalModelVersionCount}
-              </span>
-              <div style={styles.paginationControls}>
-                <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.max(1, page - 1))} disabled={modelVersionsPage === 1 || loadingMore}>
-                  Previous
-                </button>
-                <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.min(modelVersionTotalPages, page + 1))} disabled={modelVersionsPage >= modelVersionTotalPages || loadingMore}>
-                  Next
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div style={styles.emptyStateCard}>
-            <h3 style={styles.emptyStateTitle}>No model versions yet</h3>
-            <p style={styles.emptyPanelText}>When a distillation job completes, the server will register a model version here.</p>
-          </div>
-        )}
-      </section>
-
-      <section style={styles.pipelinePanel}>
-        <div style={styles.pipelinePanelHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Distillation Jobs</h2>
-            <p style={styles.cardSubtitle}>
-              Jobs represent SLM training attempts created from exported batches. This is the execution layer between export and future model versions.
-            </p>
-          </div>
-          <span style={styles.batchBadge}>{totalJobCount} jobs</span>
-        </div>
-        {distillationJobs.length > 0 ? (
-          <>
-            <div style={styles.batchGrid}>
-              {distillationJobs.map((job) => (
-                <article key={job.id} style={styles.batchCard}>
-                  <div style={styles.batchCardTop}>
-                    <div>
-                      <p style={styles.factLabel}>Job #{job.id}</p>
-                      <h3 style={styles.batchCardTitle}>{job.base_model}</h3>
-                    </div>
-                    <span style={job.status === 'queued' ? styles.batchReadyPill : styles.batchUsedPill}>
-                      {job.status}
-                    </span>
-                  </div>
-                  <div style={styles.batchMetaList}>
-                    <span>Batch {job.batch_id}</span>
-                    <span>Task {job.task_type}</span>
-                    <span>Mode {job.dataset_mode}</span>
-                    <span>Created {formatDateTime(job.created_at)}</span>
-                  </div>
-                  <div style={styles.jobProgressShell}>
-                    <div style={styles.jobProgressTop}>
-                      <span style={styles.factLabel}>Pipeline progress</span>
-                      <strong style={styles.inlineMetaStrong}>{job.progress_percent}%</strong>
-                    </div>
-                    <div style={styles.progressTrack}>
-                      <div style={{ ...styles.progressFill, width: `${job.progress_percent}%` }} />
-                    </div>
-                  </div>
-                  <div style={styles.batchStatusRow}>
-                    <span style={styles.miniStatusMuted}>Train {job.train_record_count ?? 0}</span>
-                    <span style={styles.miniStatusMuted}>Validation {job.validation_record_count ?? 0}</span>
-                  </div>
-                  <div style={styles.batchFooter}>
-                    <span style={styles.batchFooterText}>
-                      {job.progress_stage}
-                      {job.error_message ? ` · ${job.error_message}` : ''}
-                    </span>
-                  </div>
-                  {job.logs_json && job.logs_json.length > 0 ? (
-                    <div style={styles.jobMetricsBox}>
-                      <span style={styles.jobMetricsTitle}>Worker log</span>
-                      <span style={styles.jobMetricsText}>{job.logs_json[job.logs_json.length - 1]?.message}</span>
-                    </div>
-                  ) : null}
-                  {job.metrics_json && job.status === 'completed' ? (
-                    <div style={styles.jobMetricsBox}>
-                      <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
-                      <span style={styles.jobMetricsText}>{JSON.stringify(job.metrics_json)}</span>
-                    </div>
-                  ) : null}
-                  {job.artifact_uri ? (
-                    <div style={styles.jobMetricsBox}>
-                      <span style={styles.jobMetricsTitle}>Artifact</span>
-                      <span style={styles.jobMetricsText}>{job.artifact_uri}</span>
-                    </div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-            <div style={styles.paginationBar}>
-              <span style={styles.paginationMeta}>
-                Page {jobsPage} of {jobTotalPages} · Showing {currentJobStart}-{currentJobEnd} of {totalJobCount}
-              </span>
-              <div style={styles.paginationControls}>
-                <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.max(1, page - 1))} disabled={jobsPage === 1 || loadingMore}>
-                  Previous
-                </button>
-                <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.min(jobTotalPages, page + 1))} disabled={jobsPage >= jobTotalPages || loadingMore}>
-                  Next
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div style={styles.emptyStateCard}>
-            <h3 style={styles.emptyStateTitle}>No distillation jobs yet</h3>
-            <p style={styles.emptyPanelText}>Create a job from a ready export batch to start the SLM pipeline.</p>
-          </div>
-        )}
-      </section>
-
-      <section style={styles.pipelinePanel}>
-        <div style={styles.pipelinePanelHeader}>
-          <div>
-            <h2 style={styles.cardTitle}>Export Batches</h2>
-            <p style={styles.cardSubtitle}>
-              Exported record groups become the handoff point into SLM distillation. Batches marked ready can be used by the future training worker.
-            </p>
-          </div>
-          <span style={styles.batchBadge}>{totalBatchCount} batches</span>
-        </div>
-        <div style={styles.batchToolbar}>
-          <input
-            style={styles.input}
-            placeholder="Search batch id"
-            value={batchQuery}
-            onChange={(event) => setBatchQuery(event.target.value)}
-          />
-          <select style={styles.select} value={batchStatusFilter} onChange={(event) => setBatchStatusFilter(event.target.value as 'all' | 'ready_for_training' | 'used_in_training')}>
-            <option value="all">All batch states</option>
-            <option value="ready_for_training">Ready for training</option>
-            <option value="used_in_training">Used in training</option>
-          </select>
-        </div>
-        {exportBatches.length > 0 ? (
-          <>
-            <div style={styles.batchGrid}>
-              {exportBatches.map((batch) => (
-                <article key={batch.batch_id} style={styles.batchCard}>
-                  <div style={styles.batchCardTop}>
-                    <div>
-                      <p style={styles.factLabel}>Batch ID</p>
-                      <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
-                    </div>
-                    <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
-                      {batch.ready_for_training ? 'Ready for SLM training' : 'Used in training'}
-                    </span>
-                  </div>
-                  <div style={styles.batchMetaList}>
-                    <span>{batch.exported_count} records</span>
-                    <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
-                    <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
-                  </div>
-                  <div style={styles.batchStatusRow}>
-                    <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
-                    <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
-                    <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
-                    <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
-                  </div>
-                  <div style={styles.batchFooter}>
-                    <span style={styles.batchFooterText}>
-                      {batch.ready_for_training
-                        ? 'This batch is exported and ready for the upcoming distillation job flow.'
-                        : 'This batch has already been used in a training workflow and remains stored for traceability.'}
-                    </span>
-                    <div style={styles.batchActions}>
-                      <button
-                        type="button"
-                        style={styles.actionButton}
-                        onClick={() => setSelectedColabBatchId(batch.batch_id)}
-                      >
-                        Use in Colab
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.actionButton}
-                        disabled={downloadingBatchId === batch.batch_id}
-                        onClick={() => void downloadTrainingExport(batch.batch_id)}
-                      >
-                        {downloadingBatchId === batch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
-                      </button>
-                      <button
-                        type="button"
-                        style={styles.actionButton}
-                        disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
-                        onClick={() => void createDistillationJob(batch.batch_id)}
-                      >
-                        {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-            {colabBatch ? (
-              <div style={styles.colabPanel}>
-                <div style={styles.pipelinePanelHeader}>
-                  <div>
-                    <h3 style={styles.cardTitle}>Colab Training Helper</h3>
-                    <p style={styles.cardSubtitle}>
-                      Use this exact batch in Google Colab with the helper script already added to `label_wise_server`.
-                    </p>
-                  </div>
-                  <span style={styles.batchBadge}>Batch {colabBatch.batch_id}</span>
+            {modelVersions.length > 0 ? (
+              <>
+                <div style={styles.batchGrid}>
+                  {modelVersions.map((version) => (
+                    <article key={version.id} style={styles.batchCard}>
+                      <div style={styles.batchCardTop}>
+                        <div>
+                          <p style={styles.factLabel}>Version #{version.id}</p>
+                          <h3 style={styles.batchCardTitle}>{version.model_name}</h3>
+                        </div>
+                        <span style={version.status === 'ready_for_test' ? styles.batchReadyPill : styles.batchUsedPill}>
+                          {version.status}
+                        </span>
+                      </div>
+                      <div style={styles.batchMetaList}>
+                        <span>Job {version.job_id}</span>
+                        <span>Batch {version.batch_id}</span>
+                        <span>Base model {version.base_model}</span>
+                        <span>Created {formatDateTime(version.created_at)}</span>
+                      </div>
+                      <div style={styles.batchFooter}>
+                        <span style={styles.batchFooterText}>
+                          {version.artifact_uri ?? 'No artifact URI yet'}
+                        </span>
+                        <div style={styles.actionRow}>
+                          <button
+                            type="button"
+                            style={styles.actionButtonPositive}
+                            disabled={updatingModelVersionId === version.id || version.status === 'active_test'}
+                            onClick={() => void updateModelVersionStatus(version.id, 'active_test')}
+                          >
+                            {updatingModelVersionId === version.id ? 'Saving...' : 'Activate'}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.actionButton}
+                            disabled={updatingModelVersionId === version.id || version.status === 'ready_for_test'}
+                            onClick={() => void updateModelVersionStatus(version.id, 'ready_for_test')}
+                          >
+                            Set ready
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.actionButtonMuted}
+                            disabled={updatingModelVersionId === version.id || version.status === 'archived'}
+                            onClick={() => void updateModelVersionStatus(version.id, 'archived')}
+                          >
+                            Archive
+                          </button>
+                        </div>
+                      </div>
+                      {version.metrics_json ? (
+                        <div style={styles.jobMetricsBox}>
+                          <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
+                          <span style={styles.jobMetricsText}>{JSON.stringify(version.metrics_json)}</span>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
                 </div>
-                <div style={styles.colabMetaRow}>
-                  <span style={styles.miniStatusMuted}>{colabBatch.exported_count} records</span>
-                  <span style={styles.miniStatusSafe}>Safe {colabBatch.safe_count}</span>
-                  <span style={styles.miniStatusWarning}>Warning {colabBatch.warning_count}</span>
-                  <span style={styles.miniStatusUnsafe}>Unsafe {colabBatch.unsafe_count}</span>
+                <div style={styles.paginationBar}>
+                  <span style={styles.paginationMeta}>
+                    Page {modelVersionsPage} of {modelVersionTotalPages} · Showing {currentModelVersionStart}-{currentModelVersionEnd} of {totalModelVersionCount}
+                  </span>
+                  <div style={styles.paginationControls}>
+                    <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.max(1, page - 1))} disabled={modelVersionsPage === 1 || loadingMore}>
+                      Previous
+                    </button>
+                    <button type="button" style={styles.actionButton} onClick={() => setModelVersionsPage((page) => Math.min(modelVersionTotalPages, page + 1))} disabled={modelVersionsPage >= modelVersionTotalPages || loadingMore}>
+                      Next
+                    </button>
+                  </div>
                 </div>
-                <pre style={styles.colabCodeBlock}>{colabCommand}</pre>
-                <div style={styles.batchActions}>
-                  <button type="button" style={styles.actionButton} onClick={() => void copyColabCommand()} disabled={copyingColabCommand}>
-                    {copyingColabCommand ? 'Copying...' : colabCommandCopied ? 'Copied' : 'Copy command'}
-                  </button>
-                  <button type="button" style={styles.actionButton} onClick={() => void downloadTrainingExport(colabBatch.batch_id)} disabled={downloadingBatchId === colabBatch.batch_id}>
-                    {downloadingBatchId === colabBatch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
-                  </button>
-                </div>
+              </>
+            ) : (
+              <div style={styles.emptyStateCard}>
+                <h3 style={styles.emptyStateTitle}>No model versions yet</h3>
+                <p style={styles.emptyPanelText}>Completed jobs will register versions here automatically.</p>
               </div>
-            ) : null}
-            <div style={styles.paginationBar}>
-              <span style={styles.paginationMeta}>
-                Page {batchesPage} of {batchTotalPages} · Showing {currentBatchStart}-{currentBatchEnd} of {totalBatchCount}
-              </span>
-              <div style={styles.paginationControls}>
-                <button
-                  type="button"
-                  style={styles.actionButton}
-                  onClick={() => setBatchesPage((page) => Math.max(1, page - 1))}
-                  disabled={batchesPage === 1 || loadingMore}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  style={styles.actionButton}
-                  onClick={() => setBatchesPage((page) => Math.min(batchTotalPages, page + 1))}
-                  disabled={batchesPage >= batchTotalPages || loadingMore}
-                >
-                  Next
-                </button>
+            )}
+          </section>
+
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>Distillation Jobs</h2>
+                <p style={styles.cardSubtitle}>
+                  Real training attempts created from exported batches. This is the execution layer between exports and model versions.
+                </p>
               </div>
+              <span style={styles.batchBadge}>{totalJobCount} jobs</span>
             </div>
-          </>
-        ) : (
-          <div style={styles.emptyStateCard}>
-            <h3 style={styles.emptyStateTitle}>No export batches yet</h3>
-            <p style={styles.emptyPanelText}>Export approved records first. Each export will appear here as a training-ready batch.</p>
-          </div>
-        )}
-      </section>
+            {distillationJobs.length > 0 ? (
+              <>
+                <div style={styles.batchGrid}>
+                  {distillationJobs.map((job) => (
+                    <article key={job.id} style={styles.batchCard}>
+                      <div style={styles.batchCardTop}>
+                        <div>
+                          <p style={styles.factLabel}>Job #{job.id}</p>
+                          <h3 style={styles.batchCardTitle}>{job.base_model}</h3>
+                        </div>
+                        <span style={job.status === 'queued' ? styles.batchReadyPill : styles.batchUsedPill}>
+                          {job.status}
+                        </span>
+                      </div>
+                      <div style={styles.batchMetaList}>
+                        <span>Batch {job.batch_id}</span>
+                        <span>Task {job.task_type}</span>
+                        <span>Mode {job.dataset_mode}</span>
+                        <span>Created {formatDateTime(job.created_at)}</span>
+                      </div>
+                      <div style={styles.jobProgressShell}>
+                        <div style={styles.jobProgressTop}>
+                          <span style={styles.factLabel}>Pipeline progress</span>
+                          <strong style={styles.inlineMetaStrong}>{job.progress_percent}%</strong>
+                        </div>
+                        <div style={styles.progressTrack}>
+                          <div style={{ ...styles.progressFill, width: `${job.progress_percent}%` }} />
+                        </div>
+                      </div>
+                      <div style={styles.batchStatusRow}>
+                        <span style={styles.miniStatusMuted}>Train {job.train_record_count ?? 0}</span>
+                        <span style={styles.miniStatusMuted}>Validation {job.validation_record_count ?? 0}</span>
+                      </div>
+                      <div style={styles.batchFooter}>
+                        <span style={styles.batchFooterText}>
+                          {job.progress_stage}
+                          {job.error_message ? ` · ${job.error_message}` : ''}
+                        </span>
+                      </div>
+                      {job.logs_json && job.logs_json.length > 0 ? (
+                        <div style={styles.jobMetricsBox}>
+                          <span style={styles.jobMetricsTitle}>Worker log</span>
+                          <span style={styles.jobMetricsText}>{job.logs_json[job.logs_json.length - 1]?.message}</span>
+                        </div>
+                      ) : null}
+                      {job.metrics_json && job.status === 'completed' ? (
+                        <div style={styles.jobMetricsBox}>
+                          <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
+                          <span style={styles.jobMetricsText}>{JSON.stringify(job.metrics_json)}</span>
+                        </div>
+                      ) : null}
+                      {job.artifact_uri ? (
+                        <div style={styles.jobMetricsBox}>
+                          <span style={styles.jobMetricsTitle}>Artifact</span>
+                          <span style={styles.jobMetricsText}>{job.artifact_uri}</span>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+                <div style={styles.paginationBar}>
+                  <span style={styles.paginationMeta}>
+                    Page {jobsPage} of {jobTotalPages} · Showing {currentJobStart}-{currentJobEnd} of {totalJobCount}
+                  </span>
+                  <div style={styles.paginationControls}>
+                    <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.max(1, page - 1))} disabled={jobsPage === 1 || loadingMore}>
+                      Previous
+                    </button>
+                    <button type="button" style={styles.actionButton} onClick={() => setJobsPage((page) => Math.min(jobTotalPages, page + 1))} disabled={jobsPage >= jobTotalPages || loadingMore}>
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={styles.emptyStateCard}>
+                <h3 style={styles.emptyStateTitle}>No distillation jobs yet</h3>
+                <p style={styles.emptyPanelText}>Create a job from a ready export batch to start the training pipeline.</p>
+              </div>
+            )}
+          </section>
 
-      <section style={styles.analyticsStrip}>
-        <ChartCard title="Status Distribution" subtitle="Current filtered outcome mix">
-          <HorizontalBarChart data={chartData.status} emptyLabel="No status data in current filter." />
-        </ChartCard>
-        <ChartCard title="Record source" subtitle="Barcode versus photo ingestion">
-          <HorizontalBarChart data={chartData.route} emptyLabel="No route data in current filter." />
-        </ChartCard>
-        <ChartCard title="Lifecycle overview" subtitle="Where the visible records sit in the distillation workflow">
-          <HorizontalBarChart
-            data={[
-              { label: 'Needs review', value: filteredRecords.filter((record) => record.distillation_status === 'pending_review').length, tone: 'slate' as const },
-              { label: 'Ready to export', value: filteredRecords.filter((record) => record.distillation_status === 'approved_for_distillation').length, tone: 'green' as const },
-              { label: 'Exported', value: filteredRecords.filter((record) => record.distillation_status === 'exported').length, tone: 'amber' as const },
-              { label: 'Used in training', value: filteredRecords.filter((record) => record.distillation_status === 'used_in_training').length, tone: 'green' as const },
-              { label: 'Excluded', value: filteredRecords.filter((record) => record.distillation_status === 'excluded').length, tone: 'red' as const },
-            ]}
-            emptyLabel="No lifecycle data in current filter."
-          />
-        </ChartCard>
-        <ChartCard title="Top Categories" subtitle="Most common visible categories">
-          <HorizontalBarChart data={chartData.categories} emptyLabel="No category data in current filter." />
-        </ChartCard>
-      </section>
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>Export Batches</h2>
+                <p style={styles.cardSubtitle}>
+                  Exported record groups are the handoff point into training. Use them to inspect dataset readiness, download the training artifact, or create a new job.
+                </p>
+              </div>
+              <span style={styles.batchBadge}>{totalBatchCount} batches</span>
+            </div>
+            <div style={styles.batchToolbar}>
+              <input
+                style={styles.input}
+                placeholder="Search batch id"
+                value={batchQuery}
+                onChange={(event) => setBatchQuery(event.target.value)}
+              />
+              <select style={styles.select} value={batchStatusFilter} onChange={(event) => setBatchStatusFilter(event.target.value as 'all' | 'ready_for_training' | 'used_in_training')}>
+                <option value="all">All batch states</option>
+                <option value="ready_for_training">Ready for training</option>
+                <option value="used_in_training">Used in training</option>
+              </select>
+            </div>
+            {exportBatches.length > 0 ? (
+              <>
+                <div style={styles.batchGrid}>
+                  {exportBatches.map((batch) => (
+                    <article key={batch.batch_id} style={styles.batchCard}>
+                      <div style={styles.batchCardTop}>
+                        <div>
+                          <p style={styles.factLabel}>Batch ID</p>
+                          <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
+                        </div>
+                        <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
+                          {batch.ready_for_training ? 'Ready for training' : 'Used in training'}
+                        </span>
+                      </div>
+                      <div style={styles.batchMetaList}>
+                        <span>{batch.exported_count} records</span>
+                        <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
+                        <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
+                      </div>
+                      <div style={styles.batchStatusRow}>
+                        <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
+                        <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
+                        <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
+                        <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
+                      </div>
+                      <div style={styles.batchFooter}>
+                        <span style={styles.batchFooterText}>
+                          {batch.ready_for_training
+                            ? 'Prepared and waiting for a real training run.'
+                            : 'Kept for traceability after a training run.'}
+                        </span>
+                        <div style={styles.batchActions}>
+                          <button
+                            type="button"
+                            style={styles.actionButton}
+                            disabled={downloadingBatchId === batch.batch_id}
+                            onClick={() => void downloadTrainingExport(batch.batch_id)}
+                          >
+                            {downloadingBatchId === batch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.actionButton}
+                            disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
+                            onClick={() => void createDistillationJob(batch.batch_id)}
+                          >
+                            {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div style={styles.paginationBar}>
+                  <span style={styles.paginationMeta}>
+                    Page {batchesPage} of {batchTotalPages} · Showing {currentBatchStart}-{currentBatchEnd} of {totalBatchCount}
+                  </span>
+                  <div style={styles.paginationControls}>
+                    <button
+                      type="button"
+                      style={styles.actionButton}
+                      onClick={() => setBatchesPage((page) => Math.max(1, page - 1))}
+                      disabled={batchesPage === 1 || loadingMore}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.actionButton}
+                      onClick={() => setBatchesPage((page) => Math.min(batchTotalPages, page + 1))}
+                      disabled={batchesPage >= batchTotalPages || loadingMore}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={styles.emptyStateCard}>
+                <h3 style={styles.emptyStateTitle}>No export batches yet</h3>
+                <p style={styles.emptyPanelText}>Export approved records first. Each export will appear here as a training-ready batch.</p>
+              </div>
+            )}
+          </section>
+        </>
+      ) : null}
 
+      {activeWorkspace === 'curation' ? (
       <section style={styles.workspaceGrid}>
         <article style={styles.sidebarCard}>
           <div style={styles.cardHeader}>
@@ -1780,6 +1708,7 @@ export function App() {
           </article>
         </section>
       </section>
+      ) : null}
 
     </main>
   )
@@ -1816,6 +1745,29 @@ function SummaryCard({
       <h3 style={styles.summaryValue}>{value}</h3>
       <p style={styles.summarySubtitle}>{subtitle}</p>
     </article>
+  )
+}
+
+function WorkspaceTabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      style={{
+        ...styles.workspaceTab,
+        ...(active ? styles.workspaceTabActive : null),
+      }}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   )
 }
 
@@ -2435,6 +2387,45 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
     gap: '16px',
     marginBottom: '18px',
+  },
+  workspaceNav: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+    marginBottom: '20px',
+  },
+  workspaceTab: {
+    border: '1px solid #d4e0d6',
+    background: 'rgba(255,255,255,0.78)',
+    color: '#2a4d39',
+    padding: '12px 16px',
+    borderRadius: '999px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  workspaceTabActive: {
+    background: '#173f2d',
+    color: '#ffffff',
+    borderColor: '#173f2d',
+    boxShadow: '0 10px 20px rgba(23, 63, 45, 0.16)',
+  },
+  overviewGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1.2fr 0.8fr',
+    gap: '20px',
+    marginBottom: '20px',
+  },
+  trainingSnapshotGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: '12px',
+    marginBottom: '14px',
+  },
+  trainingControlStrip: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '20px',
+    marginBottom: '20px',
   },
   summaryCard: {
     background: 'rgba(255,255,255,0.84)',
