@@ -531,6 +531,10 @@ export function App() {
   --base-model Qwen/Qwen2.5-3B-Instruct \\
   --backend hf_peft_seqcls`
   }, [colabJob])
+  const colabCloneCommand = `git clone https://github.com/Tokol/label_wise_server.git
+%cd label_wise_server`
+  const colabInstallCommand = `!pip install -r requirements.txt
+!pip install torch transformers peft numpy accelerate datasets sentencepiece`
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -857,6 +861,8 @@ export function App() {
   ).length + (distillationFilter !== 'all' ? 1 : 0) + (recordQuery.trim() ? 1 : 0)
   const distillationPreview = selectedRecord ? buildDistillationExportPreview(selectedRecord) : null
   const activeModelVersion = modelVersions.find((version) => version.status === 'active_test') ?? null
+  const latestCompletedJob = distillationJobs.find((job) => job.status === 'completed') ?? null
+  const latestCompletedVersion = modelVersions.find((version) => version.status !== 'archived') ?? modelVersions[0] ?? null
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -1233,10 +1239,10 @@ export function App() {
                 <div>
                   <h2 style={styles.cardTitle}>Selected Test Model</h2>
                   <p style={styles.cardSubtitle}>
-                    This is the currently selected model version for downstream testing. Use model versions below to change it.
+                    This is the one version you would point future testing or hosted inference to. Everything else stays as history or standby.
                   </p>
                 </div>
-                <span style={styles.batchBadge}>{activeModelVersion ? 'Selected' : 'Not set'}</span>
+                <span style={styles.batchBadge}>{activeModelVersion ? 'Active test model' : 'Not set'}</span>
               </div>
               {activeModelVersion ? (
                 <div style={styles.batchMetaList}>
@@ -1253,18 +1259,35 @@ export function App() {
             <section style={styles.pipelinePanel}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
-                  <h2 style={styles.cardTitle}>Training Summary</h2>
+                  <h2 style={styles.cardTitle}>Latest Training Result</h2>
                   <p style={styles.cardSubtitle}>
-                    Focus on the three moving parts that matter: batches, jobs, and versions.
+                    Surface the latest completed run first so you do not have to scan raw JSON across cards.
                   </p>
                 </div>
               </div>
-              <div style={styles.trainingSnapshotGrid}>
-                <SummaryFact label="Batches" value={String(totalBatchCount)} />
-                <SummaryFact label="Jobs" value={String(totalJobCount)} />
-                <SummaryFact label="Versions" value={String(totalModelVersionCount)} />
-                <SummaryFact label="Ready for test" value={String(readyModelCount)} />
-              </div>
+              {latestCompletedJob ? (
+                <>
+                  <div style={styles.trainingSnapshotGrid}>
+                    <SummaryFact label="Latest job" value={`#${latestCompletedJob.id}`} />
+                    <SummaryFact label="Batch" value={latestCompletedJob.batch_id} />
+                    <SummaryFact label="Model output" value={latestCompletedVersion?.model_name ?? 'Pending version'} />
+                    <SummaryFact label="Versions" value={String(totalModelVersionCount)} />
+                  </div>
+                  <div style={styles.metricsGrid}>
+                    <MetricCard label="Accuracy" value={formatMetricValue(extractEvaluationMetric(latestCompletedJob.metrics_json, 'status_accuracy'))} />
+                    <MetricCard label="Macro F1" value={formatMetricValue(extractEvaluationMetric(latestCompletedJob.metrics_json, 'macro_f1'))} />
+                    <MetricCard label="Eval loss" value={formatMetricValue(extractEvaluationMetric(latestCompletedJob.metrics_json, 'eval_loss'))} />
+                    <MetricCard label="Train / Val" value={`${latestCompletedJob.train_record_count ?? 0} / ${latestCompletedJob.validation_record_count ?? 0}`} />
+                  </div>
+                </>
+              ) : (
+                <div style={styles.trainingSnapshotGrid}>
+                  <SummaryFact label="Batches" value={String(totalBatchCount)} />
+                  <SummaryFact label="Jobs" value={String(totalJobCount)} />
+                  <SummaryFact label="Versions" value={String(totalModelVersionCount)} />
+                  <SummaryFact label="Ready for test" value={String(readyModelCount)} />
+                </div>
+              )}
             </section>
           </section>
 
@@ -1273,7 +1296,7 @@ export function App() {
               <div>
                 <h2 style={styles.cardTitle}>Model Versions</h2>
                 <p style={styles.cardSubtitle}>
-                  Trained artifacts available for comparison, activation, or archiving.
+                  Each version is a trained output. Mark one as active for testing, keep others as standby, or archive old experiments.
                 </p>
               </div>
               <span style={styles.batchBadge}>{totalModelVersionCount} versions</span>
@@ -1288,8 +1311,8 @@ export function App() {
                           <p style={styles.factLabel}>Version #{version.id}</p>
                           <h3 style={styles.batchCardTitle}>{version.model_name}</h3>
                         </div>
-                        <span style={version.status === 'ready_for_test' ? styles.batchReadyPill : styles.batchUsedPill}>
-                          {version.status}
+                        <span style={version.status === 'active_test' ? styles.batchReadyPill : version.status === 'ready_for_test' ? styles.batchUsedPill : styles.miniStatusMuted}>
+                          {displayModelVersionStatus(version.status)}
                         </span>
                       </div>
                       <div style={styles.batchMetaList}>
@@ -1298,9 +1321,14 @@ export function App() {
                         <span>Base model {version.base_model}</span>
                         <span>Created {formatDateTime(version.created_at)}</span>
                       </div>
+                      <div style={styles.artifactPanel}>
+                        <span style={styles.jobMetricsTitle}>Artifact Location</span>
+                        <span style={styles.jobMetricsText}>{version.artifact_uri ?? 'No artifact URI yet'}</span>
+                        <span style={styles.helperText}>If the run happened in Colab, this path is inside the Colab VM until you move it to Drive, Hugging Face, or another storage location.</span>
+                      </div>
                       <div style={styles.batchFooter}>
                         <span style={styles.batchFooterText}>
-                          {version.artifact_uri ?? 'No artifact URI yet'}
+                          {describeModelVersionStatus(version.status)}
                         </span>
                         <div style={styles.actionRow}>
                           <button
@@ -1309,15 +1337,7 @@ export function App() {
                             disabled={updatingModelVersionId === version.id || version.status === 'active_test'}
                             onClick={() => void updateModelVersionStatus(version.id, 'active_test')}
                           >
-                            {updatingModelVersionId === version.id ? 'Saving...' : 'Activate'}
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.actionButton}
-                            disabled={updatingModelVersionId === version.id || version.status === 'ready_for_test'}
-                            onClick={() => void updateModelVersionStatus(version.id, 'ready_for_test')}
-                          >
-                            Set ready
+                            {updatingModelVersionId === version.id ? 'Saving...' : 'Activate for testing'}
                           </button>
                           <button
                             type="button"
@@ -1329,12 +1349,7 @@ export function App() {
                           </button>
                         </div>
                       </div>
-                      {version.metrics_json ? (
-                        <div style={styles.jobMetricsBox}>
-                          <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
-                          <span style={styles.jobMetricsText}>{JSON.stringify(version.metrics_json)}</span>
-                        </div>
-                      ) : null}
+                      {version.metrics_json ? <MetricsSummaryPanel metrics={version.metrics_json} /> : null}
                     </article>
                   ))}
                 </div>
@@ -1365,7 +1380,7 @@ export function App() {
               <div>
                 <h2 style={styles.cardTitle}>Distillation Jobs</h2>
                 <p style={styles.cardSubtitle}>
-                  Real training attempts created from exported batches. This is the execution layer between exports and model versions.
+                  Real training attempts created from exported batches. Jobs move from queued to completed or failed, and only queued jobs can be sent to Colab.
                 </p>
               </div>
               <span style={styles.batchBadge}>{totalJobCount} jobs</span>
@@ -1380,8 +1395,8 @@ export function App() {
                           <p style={styles.factLabel}>Job #{job.id}</p>
                           <h3 style={styles.batchCardTitle}>{job.base_model}</h3>
                         </div>
-                        <span style={job.status === 'queued' ? styles.batchReadyPill : styles.batchUsedPill}>
-                          {job.status}
+                        <span style={job.status === 'completed' ? styles.batchReadyPill : job.status === 'failed' ? styles.miniStatusUnsafe : job.status === 'queued' ? styles.batchUsedPill : styles.miniStatusWarning}>
+                          {displayJobStatus(job.status)}
                         </span>
                       </div>
                       <div style={styles.batchMetaList}>
@@ -1415,7 +1430,7 @@ export function App() {
                             onClick={() => void openInColab(job.id)}
                             disabled={job.status !== 'queued'}
                           >
-                            {job.status === 'completed' ? 'Completed in Colab' : job.status === 'queued' ? 'Open in Colab' : 'Colab unavailable'}
+                            {job.status === 'queued' ? 'Open in Colab' : 'Job closed'}
                           </button>
                         </div>
                       </div>
@@ -1425,16 +1440,12 @@ export function App() {
                           <span style={styles.jobMetricsText}>{job.logs_json[job.logs_json.length - 1]?.message}</span>
                         </div>
                       ) : null}
-                      {job.metrics_json && job.status === 'completed' ? (
-                        <div style={styles.jobMetricsBox}>
-                          <span style={styles.jobMetricsTitle}>Evaluation snapshot</span>
-                          <span style={styles.jobMetricsText}>{JSON.stringify(job.metrics_json)}</span>
-                        </div>
-                      ) : null}
+                      {job.metrics_json && job.status === 'completed' ? <MetricsSummaryPanel metrics={job.metrics_json} /> : null}
                       {job.artifact_uri ? (
-                        <div style={styles.jobMetricsBox}>
+                        <div style={styles.artifactPanel}>
                           <span style={styles.jobMetricsTitle}>Artifact</span>
                           <span style={styles.jobMetricsText}>{job.artifact_uri}</span>
+                          <span style={styles.helperText}>Save this out of Colab if you want to keep or host the trained adapter later.</span>
                         </div>
                       ) : null}
                     </article>
@@ -1556,11 +1567,20 @@ export function App() {
                       <span style={colabJob.status === 'completed' ? styles.batchUsedPill : colabJob.status === 'queued' ? styles.batchReadyPill : styles.miniStatusWarning}>{colabJob.status}</span>
                     </div>
                     <div style={styles.colabSteps}>
-                      <span>1. Open a GPU-backed Colab notebook only for a queued job.</span>
-                      <span>2. Clone `label_wise_server` and install the training dependencies.</span>
-                      <span>3. Paste the command below so Colab can train and report completion back to this job.</span>
+                      <span>Open a GPU-backed Colab notebook, then run these cells in order.</span>
                     </div>
-                    <pre style={styles.colabCodeBlock}>{colabCommand}</pre>
+                    <div style={styles.colabStepCard}>
+                      <span style={styles.colabStepLabel}>Step 1. Clone the server repo</span>
+                      <pre style={styles.colabCodeBlock}>{colabCloneCommand}</pre>
+                    </div>
+                    <div style={styles.colabStepCard}>
+                      <span style={styles.colabStepLabel}>Step 2. Install training dependencies</span>
+                      <pre style={styles.colabCodeBlock}>{colabInstallCommand}</pre>
+                    </div>
+                    <div style={styles.colabStepCard}>
+                      <span style={styles.colabStepLabel}>Step 3. Run this job in Colab</span>
+                      <pre style={styles.colabCodeBlock}>{`!${colabCommand}`}</pre>
+                    </div>
                     <div style={styles.batchActions}>
                       <button type="button" style={styles.actionButton} onClick={() => void copyColabCommand()} disabled={copyingColabCommand}>
                         {copyingColabCommand ? 'Copying...' : colabCommandCopied ? 'Copied' : 'Copy command'}
@@ -2092,6 +2112,28 @@ function SummaryFact({ label, value }: { label: string; value: string }) {
   )
 }
 
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={styles.metricCard}>
+      <span style={styles.summaryFactLabel}>{label}</span>
+      <strong style={styles.metricValue}>{value}</strong>
+    </div>
+  )
+}
+
+function MetricsSummaryPanel({ metrics }: { metrics: Record<string, unknown> }) {
+  return (
+    <div style={styles.metricsPanel}>
+      <div style={styles.metricsGrid}>
+        <MetricCard label="Accuracy" value={formatMetricValue(extractEvaluationMetric(metrics, 'status_accuracy'))} />
+        <MetricCard label="Macro F1" value={formatMetricValue(extractEvaluationMetric(metrics, 'macro_f1'))} />
+        <MetricCard label="Eval loss" value={formatMetricValue(extractEvaluationMetric(metrics, 'eval_loss'))} />
+        <MetricCard label="Records" value={String(extractDatasetMetric(metrics, 'record_count') ?? 'N/A')} />
+      </div>
+    </div>
+  )
+}
+
 function DetailSection({
   title,
   children,
@@ -2247,6 +2289,47 @@ function joinList(items?: string[] | null) {
     return 'None'
   }
   return items.join(', ')
+}
+
+function extractEvaluationMetric(metrics: Record<string, unknown> | null, key: string): number | null {
+  const evaluation = metrics && typeof metrics.evaluation === 'object' && metrics.evaluation !== null ? metrics.evaluation as Record<string, unknown> : null
+  const value = evaluation?.[key]
+  return typeof value === 'number' ? value : null
+}
+
+function extractDatasetMetric(metrics: Record<string, unknown> | null, key: string): number | null {
+  const datasetSummary = metrics && typeof metrics.dataset_summary === 'object' && metrics.dataset_summary !== null ? metrics.dataset_summary as Record<string, unknown> : null
+  const value = datasetSummary?.[key]
+  return typeof value === 'number' ? value : null
+}
+
+function formatMetricValue(value: number | null): string {
+  if (value == null) return 'N/A'
+  return Number.isInteger(value) ? String(value) : value.toFixed(3)
+}
+
+function displayModelVersionStatus(status: string): string {
+  if (status === 'active_test') return 'Active test model'
+  if (status === 'ready_for_test') return 'Standby'
+  if (status === 'archived') return 'Archived'
+  return status
+}
+
+function describeModelVersionStatus(status: string): string {
+  if (status === 'active_test') return 'This is the currently selected version for future testing or hosted inference.'
+  if (status === 'ready_for_test') return 'This version is available, but not currently selected for testing.'
+  if (status === 'archived') return 'This version is kept only for history and rollback.'
+  return 'Model version status is available.'
+}
+
+function displayJobStatus(status: string): string {
+  if (status === 'queued') return 'Queued'
+  if (status === 'preparing_dataset') return 'Preparing dataset'
+  if (status === 'training') return 'Training'
+  if (status === 'evaluating') return 'Evaluating'
+  if (status === 'completed') return 'Completed'
+  if (status === 'failed') return 'Failed'
+  return status
 }
 
 function formatDateTime(value: string) {
@@ -2778,6 +2861,22 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.5,
   },
+  colabStepCard: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  colabStepLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6c8072',
+    fontWeight: 800,
+  },
   colabCodeBlock: {
     margin: 0,
     padding: '16px',
@@ -2817,6 +2916,45 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.5,
     color: '#244032',
     wordBreak: 'break-word',
+  },
+  metricsPanel: {
+    borderRadius: '14px',
+    border: '1px solid #e1ebe4',
+    background: '#f6faf7',
+    padding: '12px',
+  },
+  metricsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+    gap: '10px',
+  },
+  metricCard: {
+    borderRadius: '12px',
+    background: '#ffffff',
+    border: '1px solid #e3ece5',
+    padding: '10px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  metricValue: {
+    fontSize: '24px',
+    lineHeight: 1,
+    color: '#173c2d',
+  },
+  artifactPanel: {
+    borderRadius: '14px',
+    border: '1px solid #e1ebe4',
+    background: '#f6faf7',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  helperText: {
+    color: '#617466',
+    fontSize: '12px',
+    lineHeight: 1.45,
   },
   analyticsStrip: {
     display: 'grid',
