@@ -535,6 +535,13 @@ export function App() {
 %cd label_wise_server`
   const colabInstallCommand = `!pip install -r requirements.txt
 !pip install torch transformers peft numpy accelerate datasets sentencepiece`
+  const artifactDownloadCommand = useMemo(() => {
+    if (!colabJob) return ''
+    return `!cd /content/label_wise_artifacts/${colabJob.batch_id} && zip -r model_artifact.zip model_artifact
+
+from google.colab import files
+files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifact.zip')`
+  }, [colabJob])
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1324,7 +1331,7 @@ export function App() {
                       <div style={styles.artifactPanel}>
                         <span style={styles.jobMetricsTitle}>Artifact Location</span>
                         <span style={styles.jobMetricsText}>{version.artifact_uri ?? 'No artifact URI yet'}</span>
-                        <span style={styles.helperText}>If the run happened in Colab, this path is inside the Colab VM until you move it to Drive, Hugging Face, or another storage location.</span>
+                        <span style={styles.helperText}>If the run happened in Colab, this path is inside the Colab VM until you zip and download it, copy it to Drive, or upload it to another storage location.</span>
                       </div>
                       <div style={styles.batchFooter}>
                         <span style={styles.batchFooterText}>
@@ -1445,7 +1452,7 @@ export function App() {
                         <div style={styles.artifactPanel}>
                           <span style={styles.jobMetricsTitle}>Artifact</span>
                           <span style={styles.jobMetricsText}>{job.artifact_uri}</span>
-                          <span style={styles.helperText}>Save this out of Colab if you want to keep or host the trained adapter later.</span>
+                          <span style={styles.helperText}>Save this out of Colab if you want to keep or host the trained adapter later. The handoff panel includes a zip-and-download command.</span>
                         </div>
                       ) : null}
                     </article>
@@ -1580,6 +1587,10 @@ export function App() {
                     <div style={styles.colabStepCard}>
                       <span style={styles.colabStepLabel}>Step 3. Run this job in Colab</span>
                       <pre style={styles.colabCodeBlock}>{`!${colabCommand}`}</pre>
+                    </div>
+                    <div style={styles.colabStepCard}>
+                      <span style={styles.colabStepLabel}>Step 4. Zip and download the artifact to your machine</span>
+                      <pre style={styles.colabCodeBlock}>{artifactDownloadCommand}</pre>
                     </div>
                     <div style={styles.batchActions}>
                       <button type="button" style={styles.actionButton} onClick={() => void copyColabCommand()} disabled={copyingColabCommand}>
