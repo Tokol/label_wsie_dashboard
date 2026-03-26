@@ -225,6 +225,9 @@ export function App() {
   const [activeDetailTab, setActiveDetailTab] = useState<'overview' | 'teacher' | 'input' | 'distillation' | 'developer'>('overview')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchStatusFilter, setBatchStatusFilter] = useState<'all' | 'ready_for_training' | 'used_in_training'>('all')
+  const [selectedColabBatchId, setSelectedColabBatchId] = useState<string | null>(null)
+  const [copyingColabCommand, setCopyingColabCommand] = useState(false)
+  const [colabCommandCopied, setColabCommandCopied] = useState(false)
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
@@ -520,6 +523,19 @@ export function App() {
   const currentJobEnd = totalJobCount === 0 ? 0 : currentJobStart + distillationJobs.length - 1
   const currentModelVersionStart = totalModelVersionCount === 0 ? 0 : (modelVersionsPage - 1) * MODEL_VERSIONS_PAGE_SIZE + 1
   const currentModelVersionEnd = totalModelVersionCount === 0 ? 0 : currentModelVersionStart + modelVersions.length - 1
+  const colabBatch = useMemo(
+    () => exportBatches.find((batch) => batch.batch_id === selectedColabBatchId) ?? exportBatches[0] ?? null,
+    [exportBatches, selectedColabBatchId],
+  )
+  const colabCommand = useMemo(() => {
+    if (!colabBatch) return ''
+    return `python scripts/colab_train_batch.py \\
+  --server-url ${API_BASE.replace(/\/api$/, '')} \\
+  --batch-id ${colabBatch.batch_id} \\
+  --output-dir /content/label_wise_artifacts/${colabBatch.batch_id} \\
+  --base-model Qwen/Qwen2.5-3B-Instruct \\
+  --backend hf_peft_seqcls`
+  }, [colabBatch])
 
   // Keyboard navigation support - press Shift+I for previous/next installations page, Shift+R for previous/next records page
   useEffect(() => {
@@ -777,6 +793,21 @@ export function App() {
       setError(err instanceof Error ? err.message : 'Failed to download training export')
     } finally {
       setDownloadingBatchId(null)
+    }
+  }
+
+  async function copyColabCommand() {
+    if (!colabCommand) return
+    setCopyingColabCommand(true)
+    setColabCommandCopied(false)
+    try {
+      await navigator.clipboard.writeText(colabCommand)
+      setColabCommandCopied(true)
+      window.setTimeout(() => setColabCommandCopied(false), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy Colab command')
+    } finally {
+      setCopyingColabCommand(false)
     }
   }
 
@@ -1432,6 +1463,13 @@ export function App() {
                       <button
                         type="button"
                         style={styles.actionButton}
+                        onClick={() => setSelectedColabBatchId(batch.batch_id)}
+                      >
+                        Use in Colab
+                      </button>
+                      <button
+                        type="button"
+                        style={styles.actionButton}
                         disabled={downloadingBatchId === batch.batch_id}
                         onClick={() => void downloadTrainingExport(batch.batch_id)}
                       >
@@ -1450,6 +1488,34 @@ export function App() {
                 </article>
               ))}
             </div>
+            {colabBatch ? (
+              <div style={styles.colabPanel}>
+                <div style={styles.pipelinePanelHeader}>
+                  <div>
+                    <h3 style={styles.cardTitle}>Colab Training Helper</h3>
+                    <p style={styles.cardSubtitle}>
+                      Use this exact batch in Google Colab with the helper script already added to `label_wise_server`.
+                    </p>
+                  </div>
+                  <span style={styles.batchBadge}>Batch {colabBatch.batch_id}</span>
+                </div>
+                <div style={styles.colabMetaRow}>
+                  <span style={styles.miniStatusMuted}>{colabBatch.exported_count} records</span>
+                  <span style={styles.miniStatusSafe}>Safe {colabBatch.safe_count}</span>
+                  <span style={styles.miniStatusWarning}>Warning {colabBatch.warning_count}</span>
+                  <span style={styles.miniStatusUnsafe}>Unsafe {colabBatch.unsafe_count}</span>
+                </div>
+                <pre style={styles.colabCodeBlock}>{colabCommand}</pre>
+                <div style={styles.batchActions}>
+                  <button type="button" style={styles.actionButton} onClick={() => void copyColabCommand()} disabled={copyingColabCommand}>
+                    {copyingColabCommand ? 'Copying...' : colabCommandCopied ? 'Copied' : 'Copy command'}
+                  </button>
+                  <button type="button" style={styles.actionButton} onClick={() => void downloadTrainingExport(colabBatch.batch_id)} disabled={downloadingBatchId === colabBatch.batch_id}>
+                    {downloadingBatchId === colabBatch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div style={styles.paginationBar}>
               <span style={styles.paginationMeta}>
                 Page {batchesPage} of {batchTotalPages} · Showing {currentBatchStart}-{currentBatchEnd} of {totalBatchCount}
@@ -2582,6 +2648,33 @@ const styles: Record<string, CSSProperties> = {
     gap: '10px',
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
+  },
+  colabPanel: {
+    marginTop: '18px',
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: '#f6fbf7',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  colabMetaRow: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  colabCodeBlock: {
+    margin: 0,
+    padding: '16px',
+    borderRadius: '16px',
+    background: '#12261c',
+    color: '#eaf6ef',
+    fontSize: '12px',
+    lineHeight: 1.6,
+    overflowX: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
   },
   batchFooterText: {
     color: '#617466',
