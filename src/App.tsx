@@ -529,12 +529,16 @@ export function App() {
   --batch-id ${colabJob.batch_id} \\
   --output-dir /content/label_wise_artifacts/${colabJob.batch_id} \\
   --base-model Qwen/Qwen2.5-3B-Instruct \\
+  --hf-repo-id IndraDThor/label-wise-qwen25-3b-lora \\
   --backend hf_peft_seqcls`
   }, [colabJob])
   const colabCloneCommand = `git clone https://github.com/Tokol/label_wise_server.git
 %cd label_wise_server`
   const colabInstallCommand = `!pip install -r requirements.txt
-!pip install torch transformers peft numpy accelerate datasets sentencepiece`
+!pip install torch transformers peft numpy accelerate datasets sentencepiece
+!pip install huggingface_hub`
+  const colabHfLoginCommand = `from huggingface_hub import notebook_login
+notebook_login()`
   const artifactDownloadCommand = useMemo(() => {
     if (!colabJob) return ''
     return `!cd /content/label_wise_artifacts/${colabJob.batch_id} && zip -r model_artifact.zip model_artifact
@@ -1585,11 +1589,15 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                       <pre style={styles.colabCodeBlock}>{colabInstallCommand}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 3. Run this job in Colab</span>
+                      <span style={styles.colabStepLabel}>Step 3. Log in to Hugging Face in the notebook</span>
+                      <pre style={styles.colabCodeBlock}>{colabHfLoginCommand}</pre>
+                    </div>
+                    <div style={styles.colabStepCard}>
+                      <span style={styles.colabStepLabel}>Step 4. Run this job in Colab and upload the finished adapter to Hugging Face</span>
                       <pre style={styles.colabCodeBlock}>{`!${colabCommand}`}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 4. Zip and download the artifact to your machine</span>
+                      <span style={styles.colabStepLabel}>Step 5. Zip and download the artifact to your machine</span>
                       <pre style={styles.colabCodeBlock}>{artifactDownloadCommand}</pre>
                     </div>
                     <div style={styles.batchActions}>
