@@ -960,6 +960,76 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
     { label: 'Train records', value: extractDatasetMetric(latestTrainingMetrics, 'train') ?? 0, tone: 'green' },
     { label: 'Validation records', value: extractDatasetMetric(latestTrainingMetrics, 'validation') ?? 0, tone: 'amber' },
   ]
+  const distillationSetupCards = [
+    {
+      eyebrow: 'Teacher',
+      title: 'OpenAI teacher',
+      body: 'The teacher model analyzes products first and produces the supervision signal that gets curated before training.',
+      accent: 'teacher' as const,
+    },
+    {
+      eyebrow: 'Curation',
+      title: 'Approved records',
+      body: 'Only reviewed records should be exported. This is where low-quality or misleading examples are filtered out.',
+      accent: 'curation' as const,
+    },
+    {
+      eyebrow: 'Training',
+      title: 'Qwen base + LoRA',
+      body: 'Qwen is the student base model. LoRA is the lightweight adapter trained on top of it for this specific task.',
+      accent: 'student' as const,
+    },
+    {
+      eyebrow: 'Output',
+      title: 'Versioned artifact',
+      body: 'Each completed job creates one model version and one artifact path, usually stored in Hugging Face.',
+      accent: 'artifact' as const,
+    },
+  ]
+  const glossaryCards = [
+    {
+      term: 'LoRA',
+      meaning: 'A lightweight adapter trained on top of the base model instead of rewriting the full Qwen checkpoint.',
+    },
+    {
+      term: 'Distillation',
+      meaning: 'The process where a stronger teacher helps a smaller student learn through curated examples.',
+    },
+    {
+      term: 'Installation',
+      meaning: 'One app/device registration. It explains where records came from, not how the model works.',
+    },
+    {
+      term: 'Export batch',
+      meaning: 'A grouped dataset package created from approved records and used for one training attempt.',
+    },
+    {
+      term: 'Distillation job',
+      meaning: 'One fine-tuning run on one exported batch. It can complete, fail, or produce a new model version.',
+    },
+    {
+      term: 'Active test model',
+      meaning: 'The single selected version the system treats as the current model for testing or hosted inference.',
+    },
+  ]
+  const nextStepCards = [
+    {
+      title: '1. Curate better data',
+      copy: 'Keep improving approved records. Better supervision quality matters more than collecting noisy volume.',
+    },
+    {
+      title: '2. Run larger batches',
+      copy: 'Tiny runs prove the pipeline, but larger curated batches give more trustworthy metrics and versions.',
+    },
+    {
+      title: '3. Build label_wise_lite',
+      copy: 'Use the student inference API contract in the new Flutter client instead of the current OpenAI prompt flow.',
+    },
+    {
+      title: '4. Host when needed',
+      copy: 'Keep artifacts in Hugging Face and bring up a separate GPU inference runtime only when you need it.',
+    },
+  ]
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -1412,6 +1482,70 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </div>
               </div>
             </ChartCard>
+          </section>
+
+          <section style={styles.trainingEducationGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Distillation Setup</h2>
+                  <p style={styles.cardSubtitle}>
+                    This is the teacher-student chemistry of the pipeline: OpenAI acts as the teacher, curated records become the learning material, and Qwen absorbs that knowledge through a LoRA adapter.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Teacher → Student</span>
+              </div>
+              <div style={styles.setupFlowGrid}>
+                {distillationSetupCards.map((card, index) => (
+                  <article key={card.title} style={{ ...styles.setupFlowCard, ...setupFlowAccent(card.accent) }}>
+                    <span style={styles.setupFlowEyebrow}>{card.eyebrow}</span>
+                    <h3 style={styles.setupFlowTitle}>{card.title}</h3>
+                    <p style={styles.setupFlowBody}>{card.body}</p>
+                    {index < distillationSetupCards.length - 1 ? <span style={styles.setupFlowArrow}>→</span> : null}
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Glossary</h2>
+                  <p style={styles.cardSubtitle}>
+                    These are the terms that matter most in this workspace so the labels on jobs, versions, and artifacts stay understandable.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Key concepts</span>
+              </div>
+              <div style={styles.glossaryGrid}>
+                {glossaryCards.map((card) => (
+                  <article key={card.term} style={styles.glossaryCard}>
+                    <span style={styles.glossaryTerm}>{card.term}</span>
+                    <p style={styles.glossaryMeaning}>{card.meaning}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </section>
+
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>What Comes Next</h2>
+                <p style={styles.cardSubtitle}>
+                  The pipeline foundation is in place. These are the next high-value moves after the first training and artifact flow.
+                </p>
+              </div>
+              <span style={styles.batchBadge}>Next actions</span>
+            </div>
+            <div style={styles.nextStepsGrid}>
+              {nextStepCards.map((item) => (
+                <article key={item.title} style={styles.nextStepCard}>
+                  <h3 style={styles.nextStepTitle}>{item.title}</h3>
+                  <p style={styles.nextStepCopy}>{item.copy}</p>
+                </article>
+              ))}
+            </div>
           </section>
 
           <section style={styles.trainingControlStrip}>
@@ -2555,6 +2689,31 @@ function numericRecordMetric(value: unknown): number {
   return typeof value === 'number' ? value : 0
 }
 
+function setupFlowAccent(accent: 'teacher' | 'curation' | 'student' | 'artifact'): CSSProperties {
+  if (accent === 'teacher') {
+    return {
+      background: 'linear-gradient(180deg, #f5f0ff 0%, #efe6ff 100%)',
+      borderColor: '#dac7fb',
+    }
+  }
+  if (accent === 'curation') {
+    return {
+      background: 'linear-gradient(180deg, #eef8f1 0%, #e3f3e8 100%)',
+      borderColor: '#bfd8c7',
+    }
+  }
+  if (accent === 'student') {
+    return {
+      background: 'linear-gradient(180deg, #eef6ff 0%, #e0efff 100%)',
+      borderColor: '#bfd6ee',
+    }
+  }
+  return {
+    background: 'linear-gradient(180deg, #fff6e9 0%, #ffefd2 100%)',
+    borderColor: '#ead7ac',
+  }
+}
+
 function formatMetricValue(value: number | null): string {
   if (value == null) return 'N/A'
   return Number.isInteger(value) ? String(value) : value.toFixed(3)
@@ -3366,6 +3525,101 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.5,
     wordBreak: 'break-word',
+  },
+  setupFlowGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+  },
+  setupFlowCard: {
+    position: 'relative',
+    border: '1px solid #dce7dd',
+    borderRadius: '18px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    minHeight: '164px',
+  },
+  setupFlowEyebrow: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.09em',
+    color: '#5f7166',
+    fontWeight: 800,
+  },
+  setupFlowTitle: {
+    margin: 0,
+    fontSize: '18px',
+    lineHeight: 1.25,
+    color: '#173c2d',
+  },
+  setupFlowBody: {
+    margin: 0,
+    color: '#344d3f',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  setupFlowArrow: {
+    position: 'absolute',
+    right: '12px',
+    bottom: '12px',
+    fontSize: '20px',
+    color: '#5d7165',
+    fontWeight: 800,
+  },
+  glossaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+    gap: '12px',
+  },
+  glossaryCard: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  glossaryTerm: {
+    fontSize: '13px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#365144',
+    fontWeight: 800,
+  },
+  glossaryMeaning: {
+    margin: 0,
+    color: '#607367',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  nextStepsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+  },
+  nextStepCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f5faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  nextStepTitle: {
+    margin: 0,
+    fontSize: '17px',
+    lineHeight: 1.3,
+    color: '#173c2d',
+  },
+  nextStepCopy: {
+    margin: 0,
+    color: '#607367',
+    fontSize: '13px',
+    lineHeight: 1.55,
   },
   analyticsStrip: {
     display: 'grid',
