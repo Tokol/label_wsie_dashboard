@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 
 type Installation = {
   installation_id: string
@@ -301,6 +301,13 @@ export function App() {
   const [selectedEducationStage, setSelectedEducationStage] = useState<'teacher' | 'curation' | 'training' | 'artifact' | 'activation'>('teacher')
   const [comparisonLeftVersionId, setComparisonLeftVersionId] = useState<number | null>(null)
   const [comparisonRightVersionId, setComparisonRightVersionId] = useState<number | null>(null)
+  const [trainingDemoMode, setTrainingDemoMode] = useState(true)
+  const trustSectionRef = useRef<HTMLElement | null>(null)
+  const activeModelSectionRef = useRef<HTMLElement | null>(null)
+  const lineageSectionRef = useRef<HTMLElement | null>(null)
+  const modelVersionsSectionRef = useRef<HTMLElement | null>(null)
+  const jobsSectionRef = useRef<HTMLElement | null>(null)
+  const batchesSectionRef = useRef<HTMLElement | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -1280,6 +1287,25 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
       copy: 'Real online student inference is intentionally postponed because serving costs are high. The project keeps the artifact path and activation flow ready for that later phase.',
     },
   ]
+
+  function scrollToTrainingStage(stage: 'teacher' | 'curation' | 'training' | 'artifact' | 'activation') {
+    setSelectedEducationStage(stage)
+
+    const target =
+      stage === 'curation'
+        ? batchesSectionRef.current
+        : stage === 'training'
+          ? jobsSectionRef.current
+          : stage === 'artifact'
+            ? modelVersionsSectionRef.current
+            : stage === 'activation'
+              ? activeModelSectionRef.current
+              : trustSectionRef.current
+
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const metaphorStageTone =
     selectedEducationStage === 'teacher'
       ? 'Teacher-heavy'
@@ -1321,7 +1347,6 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
     if (!left.active && right.active) return 1
     return right.version.id - left.version.id
   })
-
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
       setDistillationFilter('all')
@@ -1694,6 +1719,44 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
           <section style={styles.pipelinePanel}>
             <div style={styles.pipelinePanelHeader}>
               <div>
+                <h2 style={styles.cardTitle}>Training Workspace Mode</h2>
+                <p style={styles.cardSubtitle}>
+                  Switch between a thesis-demo narrative and the full operational workspace. Demo mode keeps the research story clear. Workspace mode exposes the detailed job and batch controls.
+                </p>
+              </div>
+              <span style={styles.batchBadge}>{trainingDemoMode ? 'Demo mode' : 'Workspace mode'}</span>
+            </div>
+            <div style={styles.modeToggleRow}>
+              <button
+                type="button"
+                style={trainingDemoMode ? styles.modeToggleButtonActive : styles.modeToggleButton}
+                onClick={() => setTrainingDemoMode(true)}
+              >
+                Demo mode
+              </button>
+              <button
+                type="button"
+                style={!trainingDemoMode ? styles.modeToggleButtonActive : styles.modeToggleButton}
+                onClick={() => setTrainingDemoMode(false)}
+              >
+                Workspace mode
+              </button>
+            </div>
+            <div style={styles.modeSummaryGrid}>
+              <article style={styles.modeSummaryCard}>
+                <span style={styles.modeSummaryLabel}>Demo mode focuses on</span>
+                <p style={styles.modeSummaryBody}>diagram, guided process, trust summary, lineage, comparison, and active-model story.</p>
+              </article>
+              <article style={styles.modeSummaryCard}>
+                <span style={styles.modeSummaryLabel}>Workspace mode focuses on</span>
+                <p style={styles.modeSummaryBody}>export batches, distillation jobs, Colab handoff, full model-version cards, and operational control.</p>
+              </article>
+            </div>
+          </section>
+
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
                 <h2 style={styles.cardTitle}>How Distillation Works In Label Wise</h2>
                 <p style={styles.cardSubtitle}>
                   The mobile app scans food labels and product data, the OpenAI-backed teacher produces structured decisions, the dashboard curates those records into training batches, and the resulting student artifact is prepared for lower-cost future inference.
@@ -1703,7 +1766,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             </div>
             <DistillationDiagram
               selectedStage={selectedEducationStage}
-              onSelectStage={setSelectedEducationStage}
+              onSelectStage={scrollToTrainingStage}
               selectedStageOutput={selectedEducationCard.outputs}
             />
             <div style={styles.diagramContextGrid}>
@@ -1734,7 +1797,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             </div>
           </section>
 
-          <section style={styles.trainingEducationGrid}>
+          <section ref={trustSectionRef} style={styles.trainingEducationGrid}>
             <section style={styles.pipelinePanel}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
@@ -1801,7 +1864,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                     key={stage.id}
                     type="button"
                     style={selectedEducationStage === stage.id ? styles.educationStageButtonActive : styles.educationStageButton}
-                    onClick={() => setSelectedEducationStage(stage.id)}
+                    onClick={() => scrollToTrainingStage(stage.id)}
                   >
                     <span style={styles.educationStageEyebrow}>{stage.eyebrow}</span>
                     <strong style={styles.educationStageTitle}>{stage.title}</strong>
@@ -1966,72 +2029,76 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             </section>
           </section>
 
-          <section style={styles.trainingEducationGrid}>
-            <section style={styles.pipelinePanel}>
-              <div style={styles.pipelinePanelHeader}>
-                <div>
-                  <h2 style={styles.cardTitle}>Distillation Setup</h2>
-                  <p style={styles.cardSubtitle}>
-                    This is the teacher-student chemistry of the pipeline: OpenAI acts as the teacher, curated records become the learning material, and Qwen absorbs that knowledge through a LoRA adapter.
-                  </p>
-                </div>
-                <span style={styles.batchBadge}>Teacher → Student</span>
-              </div>
-              <div style={styles.setupFlowGrid}>
-                {distillationSetupCards.map((card, index) => (
-                  <article key={card.title} style={{ ...styles.setupFlowCard, ...setupFlowAccent(card.accent) }}>
-                    <span style={styles.setupFlowEyebrow}>{card.eyebrow}</span>
-                    <h3 style={styles.setupFlowTitle}>{card.title}</h3>
-                    <p style={styles.setupFlowBody}>{card.body}</p>
-                    {index < distillationSetupCards.length - 1 ? <span style={styles.setupFlowArrow}>→</span> : null}
-                  </article>
-                ))}
-              </div>
-            </section>
+          {!trainingDemoMode ? (
+            <>
+              <section style={styles.trainingEducationGrid}>
+                <section style={styles.pipelinePanel}>
+                  <div style={styles.pipelinePanelHeader}>
+                    <div>
+                      <h2 style={styles.cardTitle}>Distillation Setup</h2>
+                      <p style={styles.cardSubtitle}>
+                        This is the teacher-student chemistry of the pipeline: OpenAI acts as the teacher, curated records become the learning material, and Qwen absorbs that knowledge through a LoRA adapter.
+                      </p>
+                    </div>
+                    <span style={styles.batchBadge}>Teacher → Student</span>
+                  </div>
+                  <div style={styles.setupFlowGrid}>
+                    {distillationSetupCards.map((card, index) => (
+                      <article key={card.title} style={{ ...styles.setupFlowCard, ...setupFlowAccent(card.accent) }}>
+                        <span style={styles.setupFlowEyebrow}>{card.eyebrow}</span>
+                        <h3 style={styles.setupFlowTitle}>{card.title}</h3>
+                        <p style={styles.setupFlowBody}>{card.body}</p>
+                        {index < distillationSetupCards.length - 1 ? <span style={styles.setupFlowArrow}>→</span> : null}
+                      </article>
+                    ))}
+                  </div>
+                </section>
 
-            <section style={styles.pipelinePanel}>
-              <div style={styles.pipelinePanelHeader}>
-                <div>
-                  <h2 style={styles.cardTitle}>Glossary</h2>
-                  <p style={styles.cardSubtitle}>
-                    These are the terms that matter most in this workspace so the labels on jobs, versions, and artifacts stay understandable.
-                  </p>
-                </div>
-                <span style={styles.batchBadge}>Key concepts</span>
-              </div>
-              <div style={styles.glossaryGrid}>
-                {glossaryCards.map((card) => (
-                  <article key={card.term} style={styles.glossaryCard}>
-                    <span style={styles.glossaryTerm}>{card.term}</span>
-                    <p style={styles.glossaryMeaning}>{card.meaning}</p>
-                  </article>
-                ))}
-              </div>
-            </section>
-          </section>
+                <section style={styles.pipelinePanel}>
+                  <div style={styles.pipelinePanelHeader}>
+                    <div>
+                      <h2 style={styles.cardTitle}>Glossary</h2>
+                      <p style={styles.cardSubtitle}>
+                        These are the terms that matter most in this workspace so the labels on jobs, versions, and artifacts stay understandable.
+                      </p>
+                    </div>
+                    <span style={styles.batchBadge}>Key concepts</span>
+                  </div>
+                  <div style={styles.glossaryGrid}>
+                    {glossaryCards.map((card) => (
+                      <article key={card.term} style={styles.glossaryCard}>
+                        <span style={styles.glossaryTerm}>{card.term}</span>
+                        <p style={styles.glossaryMeaning}>{card.meaning}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              </section>
 
-          <section style={styles.pipelinePanel}>
-            <div style={styles.pipelinePanelHeader}>
-              <div>
-                <h2 style={styles.cardTitle}>What Comes Next</h2>
-                <p style={styles.cardSubtitle}>
-                  The pipeline foundation is in place. These are the next high-value moves after the first training and artifact flow.
-                </p>
-              </div>
-              <span style={styles.batchBadge}>Next actions</span>
-            </div>
-            <div style={styles.nextStepsGrid}>
-              {nextStepCards.map((item) => (
-                <article key={item.title} style={styles.nextStepCard}>
-                  <h3 style={styles.nextStepTitle}>{item.title}</h3>
-                  <p style={styles.nextStepCopy}>{item.copy}</p>
-                </article>
-              ))}
-            </div>
-          </section>
+              <section style={styles.pipelinePanel}>
+                <div style={styles.pipelinePanelHeader}>
+                  <div>
+                    <h2 style={styles.cardTitle}>What Comes Next</h2>
+                    <p style={styles.cardSubtitle}>
+                      The pipeline foundation is in place. These are the next high-value moves after the first training and artifact flow.
+                    </p>
+                  </div>
+                  <span style={styles.batchBadge}>Next actions</span>
+                </div>
+                <div style={styles.nextStepsGrid}>
+                  {nextStepCards.map((item) => (
+                    <article key={item.title} style={styles.nextStepCard}>
+                      <h3 style={styles.nextStepTitle}>{item.title}</h3>
+                      <p style={styles.nextStepCopy}>{item.copy}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : null}
 
           <section style={styles.trainingControlStrip}>
-            <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['activation']) }}>
+            <section ref={activeModelSectionRef} style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['activation']) }}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
                   <h2 style={styles.cardTitle}>Selected Test Model</h2>
@@ -2059,6 +2126,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               )}
             </section>
 
+            {!trainingDemoMode ? (
             <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['training', 'artifact']) }}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
@@ -2092,9 +2160,10 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </div>
               )}
             </section>
+            ) : null}
           </section>
 
-          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation', 'training', 'artifact', 'activation']) }}>
+          <section ref={lineageSectionRef} style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation', 'training', 'artifact', 'activation']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Model Lineage</h2>
@@ -2178,7 +2247,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             )}
           </section>
 
-          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['artifact', 'activation']) }}>
+          <section ref={modelVersionsSectionRef} style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['artifact', 'activation']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Model Versions</h2>
@@ -2382,7 +2451,8 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             )}
           </section>
 
-          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['training']) }}>
+          {!trainingDemoMode ? (
+          <section ref={jobsSectionRef} style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['training']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Distillation Jobs</h2>
@@ -2507,8 +2577,10 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               </div>
             )}
           </section>
+          ) : null}
 
-          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation']) }}>
+          {!trainingDemoMode ? (
+          <section ref={batchesSectionRef} style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Export Batches</h2>
@@ -2541,57 +2613,82 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               <>
                 <div style={styles.batchGrid}>
                   {exportBatches.map((batch) => (
-                    <article key={batch.batch_id} style={styles.batchCard}>
-                      <div style={styles.batchCardTop}>
-                        <div>
-                          <p style={styles.factLabel}>Batch ID</p>
-                          <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
-                        </div>
-                        <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
-                          {batch.ready_for_training ? 'Ready for training' : 'Used in training'}
-                        </span>
-                      </div>
-                      <div style={styles.batchMetaList}>
-                        <span>{batch.exported_count} records</span>
-                        <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
-                        <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
-                      </div>
-                      <div style={styles.batchStatusRow}>
-                        <span style={styles.miniStagePill}>Curated dataset</span>
-                        {batch.ready_for_training ? <span style={styles.miniStagePillSecondary}>Job can start</span> : <span style={styles.miniStagePillMuted}>Already consumed</span>}
-                      </div>
-                      <div style={styles.batchStatusRow}>
-                        <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
-                        <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
-                        <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
-                        <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
-                      </div>
-                      <div style={styles.batchFooter}>
-                        <span style={styles.batchFooterText}>
-                          {batch.ready_for_training
-                            ? 'Prepared and waiting for a real training run.'
-                            : 'Kept for traceability after a training run.'}
-                        </span>
-                        <div style={styles.batchActions}>
-                          <button
-                            type="button"
-                            style={styles.actionButton}
-                            disabled={downloadingBatchId === batch.batch_id}
-                            onClick={() => void downloadTrainingExport(batch.batch_id)}
-                          >
-                            {downloadingBatchId === batch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.actionButton}
-                            disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
-                            onClick={() => void createDistillationJob(batch.batch_id)}
-                          >
-                            {creatingJobBatchId === batch.batch_id ? 'Creating job...' : 'Start distillation'}
-                          </button>
-                        </div>
-                      </div>
-                    </article>
+                    (() => {
+                      const quality = assessBatchQuality(batch)
+                      return (
+                        <article key={batch.batch_id} style={styles.batchCard}>
+                          <div style={styles.batchCardTop}>
+                            <div>
+                              <p style={styles.factLabel}>Batch ID</p>
+                              <h3 style={styles.batchCardTitle}>{batch.batch_id}</h3>
+                            </div>
+                            <span style={batch.ready_for_training ? styles.batchReadyPill : styles.batchUsedPill}>
+                              {batch.ready_for_training ? 'Ready for training' : 'Used in training'}
+                            </span>
+                          </div>
+                          <div style={styles.batchMetaList}>
+                            <span>{batch.exported_count} records</span>
+                            <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
+                            <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
+                          </div>
+                          <div style={styles.batchStatusRow}>
+                            <span style={styles.miniStagePill}>Curated dataset</span>
+                            {batch.ready_for_training ? <span style={styles.miniStagePillSecondary}>Job can start</span> : <span style={styles.miniStagePillMuted}>Already consumed</span>}
+                          </div>
+                          <div style={styles.batchQualityCard}>
+                            <div style={styles.batchQualityTop}>
+                              <span style={styles.batchQualityLabel}>Batch quality gate</span>
+                              <span style={quality.tone === 'good' ? styles.runTrustPillGood : quality.tone === 'watch' ? styles.runTrustPillWatch : styles.runTrustPillRisk}>
+                                {quality.badge}
+                              </span>
+                            </div>
+                            <p style={styles.batchQualityBody}>{quality.summary}</p>
+                            <div style={styles.batchQualityReasonList}>
+                              {quality.reasons.map((reason) => (
+                                <span key={`${batch.batch_id}-${reason}`} style={styles.batchQualityReason}>
+                                  {reason}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div style={styles.batchStatusRow}>
+                            <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
+                            <span style={styles.miniStatusWarning}>Warning {batch.warning_count}</span>
+                            <span style={styles.miniStatusUnsafe}>Unsafe {batch.unsafe_count}</span>
+                            <span style={styles.miniStatusMuted}>Cannot assess {batch.cannot_assess_count}</span>
+                          </div>
+                          <div style={styles.batchFooter}>
+                            <span style={styles.batchFooterText}>
+                              {batch.ready_for_training
+                                ? quality.tone === 'good'
+                                  ? 'Prepared and looks like a strong candidate for a real training run.'
+                                  : quality.tone === 'watch'
+                                    ? 'Usable for pipeline testing, but read the warnings before treating the next metrics as strong evidence.'
+                                    : 'This batch is better treated as a workflow check than a serious training candidate.'
+                                : 'Kept for traceability after a training run.'}
+                            </span>
+                            <div style={styles.batchActions}>
+                              <button
+                                type="button"
+                                style={styles.actionButton}
+                                disabled={downloadingBatchId === batch.batch_id}
+                                onClick={() => void downloadTrainingExport(batch.batch_id)}
+                              >
+                                {downloadingBatchId === batch.batch_id ? 'Preparing JSONL...' : 'Download JSONL'}
+                              </button>
+                              <button
+                                type="button"
+                                style={styles.actionButton}
+                                disabled={!batch.ready_for_training || creatingJobBatchId === batch.batch_id}
+                                onClick={() => void createDistillationJob(batch.batch_id)}
+                              >
+                                {creatingJobBatchId === batch.batch_id ? 'Creating job...' : quality.tone === 'risk' ? 'Train anyway' : 'Start distillation'}
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      )
+                    })()
                   ))}
                 </div>
                 {colabJob ? (
@@ -2703,6 +2800,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               </div>
             )}
           </section>
+          ) : null}
         </>
       ) : null}
 
@@ -3575,6 +3673,87 @@ function buildVersionComparisonSummary(
   return `${winner} looks stronger overall in this comparison. Macro F1 matters most here because it says more about label balance than raw accuracy alone. ${sizeCaution} ${lossReading}`
 }
 
+function assessBatchQuality(batch: DistillationBatch): {
+  tone: 'good' | 'watch' | 'risk'
+  badge: string
+  summary: string
+  reasons: string[]
+} {
+  const reasons: string[] = []
+  const total = Math.max(1, batch.exported_count)
+  const dominantShare = Math.max(
+    batch.safe_count,
+    batch.warning_count,
+    batch.unsafe_count,
+    batch.cannot_assess_count,
+    batch.unknown_count,
+  ) / total
+  const uncertainShare = (batch.cannot_assess_count + batch.unknown_count) / total
+
+  if (batch.exported_count < 12) {
+    reasons.push('very small batch')
+  } else if (batch.exported_count < 30) {
+    reasons.push('small batch')
+  } else {
+    reasons.push('usable batch size')
+  }
+
+  if (dominantShare > 0.75) {
+    reasons.push('heavy label imbalance')
+  } else if (dominantShare > 0.55) {
+    reasons.push('moderate label imbalance')
+  } else {
+    reasons.push('labels are fairly balanced')
+  }
+
+  if (uncertainShare > 0.35) {
+    reasons.push('many uncertain labels')
+  } else if (uncertainShare > 0.15) {
+    reasons.push('some uncertain labels')
+  } else {
+    reasons.push('few uncertain labels')
+  }
+
+  if (batch.safe_count === 0 || batch.warning_count === 0 || batch.unsafe_count === 0) {
+    reasons.push('missing one main class')
+  }
+
+  const riskCount =
+    (batch.exported_count < 12 ? 1 : 0) +
+    (dominantShare > 0.75 ? 1 : 0) +
+    (uncertainShare > 0.35 ? 1 : 0) +
+    (batch.safe_count === 0 || batch.warning_count === 0 || batch.unsafe_count === 0 ? 1 : 0)
+  const watchCount =
+    (batch.exported_count >= 12 && batch.exported_count < 30 ? 1 : 0) +
+    (dominantShare > 0.55 && dominantShare <= 0.75 ? 1 : 0) +
+    (uncertainShare > 0.15 && uncertainShare <= 0.35 ? 1 : 0)
+
+  if (riskCount >= 2) {
+    return {
+      tone: 'risk',
+      badge: 'Needs more curation',
+      summary: 'This batch is better for proving the pipeline works than for drawing strong training conclusions.',
+      reasons,
+    }
+  }
+
+  if (riskCount >= 1 || watchCount >= 2) {
+    return {
+      tone: 'watch',
+      badge: 'Usable for testing',
+      summary: 'This batch can support a training run, but the resulting metrics should be interpreted carefully.',
+      reasons,
+    }
+  }
+
+  return {
+    tone: 'good',
+    badge: 'Good training candidate',
+    summary: 'This batch looks healthy enough for a more meaningful training attempt and metric reading.',
+    reasons,
+  }
+}
+
 function stagePanelHighlight(
   selectedStage: 'teacher' | 'curation' | 'training' | 'artifact' | 'activation',
   panelStages: Array<'teacher' | 'curation' | 'training' | 'artifact' | 'activation'>,
@@ -4058,6 +4237,59 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.5,
     flex: 1,
     minWidth: '220px',
+  },
+  modeToggleRow: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+    marginBottom: '14px',
+  },
+  modeToggleButton: {
+    border: '1px solid #d4dfd6',
+    background: '#ffffff',
+    color: '#2e493a',
+    padding: '10px 14px',
+    borderRadius: '999px',
+    fontWeight: 700,
+    fontSize: '13px',
+    cursor: 'pointer',
+  },
+  modeToggleButtonActive: {
+    border: '1px solid #8ab39a',
+    background: '#ecf7ef',
+    color: '#1f5d38',
+    padding: '10px 14px',
+    borderRadius: '999px',
+    fontWeight: 800,
+    fontSize: '13px',
+    cursor: 'pointer',
+  },
+  modeSummaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: '12px',
+  },
+  modeSummaryCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f5faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  modeSummaryLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#62786b',
+    fontWeight: 800,
+  },
+  modeSummaryBody: {
+    margin: 0,
+    color: '#52695d',
+    fontSize: '13px',
+    lineHeight: 1.6,
   },
   pipelineStageGrid: {
     display: 'grid',
@@ -4707,6 +4939,50 @@ const styles: Record<string, CSSProperties> = {
     gap: '10px',
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
+  },
+  batchQualityCard: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  batchQualityTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '10px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  batchQualityLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#698074',
+    fontWeight: 800,
+  },
+  batchQualityBody: {
+    margin: 0,
+    color: '#51675c',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  batchQualityReasonList: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+  batchQualityReason: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#f3f6f4',
+    color: '#54685d',
+    fontWeight: 700,
+    fontSize: '12px',
   },
   colabPanel: {
     marginTop: '18px',
