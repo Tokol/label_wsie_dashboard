@@ -299,6 +299,8 @@ export function App() {
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
   const [selectedEducationStage, setSelectedEducationStage] = useState<'teacher' | 'curation' | 'training' | 'artifact' | 'activation'>('teacher')
+  const [comparisonLeftVersionId, setComparisonLeftVersionId] = useState<number | null>(null)
+  const [comparisonRightVersionId, setComparisonRightVersionId] = useState<number | null>(null)
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -959,6 +961,16 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
   const activeModelVersion = modelVersions.find((version) => version.status === 'active_test') ?? null
   const latestCompletedJob = distillationJobs.find((job) => job.status === 'completed') ?? null
   const latestCompletedVersion = modelVersions.find((version) => version.status !== 'archived') ?? modelVersions[0] ?? null
+  const comparisonLeftVersion =
+    modelVersions.find((version) => version.id === comparisonLeftVersionId) ??
+    modelVersions.find((version) => version.status === 'active_test') ??
+    modelVersions[0] ??
+    null
+  const comparisonRightVersion =
+    modelVersions.find((version) => version.id === comparisonRightVersionId) ??
+    modelVersions.find((version) => version.id !== comparisonLeftVersion?.id) ??
+    modelVersions[1] ??
+    null
   const latestTrainingMetrics = latestCompletedVersion?.metrics_json ?? latestCompletedJob?.metrics_json ?? null
   const latestDatasetSummary =
     latestTrainingMetrics && typeof latestTrainingMetrics.dataset_summary === 'object' && latestTrainingMetrics.dataset_summary !== null
@@ -1278,6 +1290,23 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
           : selectedEducationStage === 'artifact'
             ? 'Artifact handoff'
             : 'Activation ready'
+  const comparisonRecordsDelta =
+    comparisonLeftVersion && comparisonRightVersion
+      ? (extractDatasetMetric(comparisonLeftVersion.metrics_json, 'record_count') ?? 0) - (extractDatasetMetric(comparisonRightVersion.metrics_json, 'record_count') ?? 0)
+      : null
+  const comparisonAccuracyDelta =
+    comparisonLeftVersion && comparisonRightVersion
+      ? (extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'status_accuracy') ?? 0) - (extractEvaluationMetric(comparisonRightVersion.metrics_json, 'status_accuracy') ?? 0)
+      : null
+  const comparisonMacroF1Delta =
+    comparisonLeftVersion && comparisonRightVersion
+      ? (extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'macro_f1') ?? 0) - (extractEvaluationMetric(comparisonRightVersion.metrics_json, 'macro_f1') ?? 0)
+      : null
+  const comparisonEvalLossDelta =
+    comparisonLeftVersion && comparisonRightVersion
+      ? (extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'eval_loss') ?? 0) - (extractEvaluationMetric(comparisonRightVersion.metrics_json, 'eval_loss') ?? 0)
+      : null
+  const comparisonSummary = buildVersionComparisonSummary(comparisonLeftVersion, comparisonRightVersion)
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -2067,6 +2096,98 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 Completed jobs turn into version records here. This is the bridge between a finished artifact and an activatable model choice.
               </p>
             </div>
+            {modelVersions.length > 0 ? (
+              <div style={styles.versionCompareShell}>
+                <div style={styles.versionCompareToolbar}>
+                  <div style={styles.versionComparePicker}>
+                    <span style={styles.versionCompareLabel}>Compare left</span>
+                    <select
+                      style={styles.select}
+                      value={comparisonLeftVersion?.id ?? ''}
+                      onChange={(event) => setComparisonLeftVersionId(event.target.value ? Number(event.target.value) : null)}
+                    >
+                      {modelVersions.map((version) => (
+                        <option key={`left-${version.id}`} value={version.id}>
+                          {version.model_name} · #{version.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.versionComparePicker}>
+                    <span style={styles.versionCompareLabel}>Compare right</span>
+                    <select
+                      style={styles.select}
+                      value={comparisonRightVersion?.id ?? ''}
+                      onChange={(event) => setComparisonRightVersionId(event.target.value ? Number(event.target.value) : null)}
+                    >
+                      {modelVersions.map((version) => (
+                        <option key={`right-${version.id}`} value={version.id}>
+                          {version.model_name} · #{version.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {comparisonLeftVersion && comparisonRightVersion ? (
+                  <>
+                    <div style={styles.versionCompareGrid}>
+                      <article style={styles.versionCompareCard}>
+                        <span style={styles.versionCompareCardLabel}>Left version</span>
+                        <h3 style={styles.versionCompareCardTitle}>{comparisonLeftVersion.model_name}</h3>
+                        <p style={styles.versionCompareCardMeta}>
+                          #{comparisonLeftVersion.id} · {displayModelVersionStatus(comparisonLeftVersion.status)} · Batch {comparisonLeftVersion.batch_id}
+                        </p>
+                        <div style={styles.metricsGrid}>
+                          <MetricCard label="Accuracy" value={formatMetricValue(extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'status_accuracy'))} />
+                          <MetricCard label="Macro F1" value={formatMetricValue(extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'macro_f1'))} />
+                          <MetricCard label="Eval loss" value={formatMetricValue(extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'eval_loss'))} />
+                          <MetricCard label="Records" value={String(extractDatasetMetric(comparisonLeftVersion.metrics_json, 'record_count') ?? 'N/A')} />
+                        </div>
+                      </article>
+                      <article style={styles.versionCompareCard}>
+                        <span style={styles.versionCompareCardLabel}>Right version</span>
+                        <h3 style={styles.versionCompareCardTitle}>{comparisonRightVersion.model_name}</h3>
+                        <p style={styles.versionCompareCardMeta}>
+                          #{comparisonRightVersion.id} · {displayModelVersionStatus(comparisonRightVersion.status)} · Batch {comparisonRightVersion.batch_id}
+                        </p>
+                        <div style={styles.metricsGrid}>
+                          <MetricCard label="Accuracy" value={formatMetricValue(extractEvaluationMetric(comparisonRightVersion.metrics_json, 'status_accuracy'))} />
+                          <MetricCard label="Macro F1" value={formatMetricValue(extractEvaluationMetric(comparisonRightVersion.metrics_json, 'macro_f1'))} />
+                          <MetricCard label="Eval loss" value={formatMetricValue(extractEvaluationMetric(comparisonRightVersion.metrics_json, 'eval_loss'))} />
+                          <MetricCard label="Records" value={String(extractDatasetMetric(comparisonRightVersion.metrics_json, 'record_count') ?? 'N/A')} />
+                        </div>
+                      </article>
+                    </div>
+                    <div style={styles.versionCompareSummary}>
+                      <div style={styles.versionCompareDeltaGrid}>
+                        <div style={styles.versionCompareDeltaCard}>
+                          <span style={styles.versionCompareDeltaLabel}>Accuracy delta</span>
+                          <strong style={styles.versionCompareDeltaValue}>{formatSignedMetricDelta(comparisonAccuracyDelta)}</strong>
+                        </div>
+                        <div style={styles.versionCompareDeltaCard}>
+                          <span style={styles.versionCompareDeltaLabel}>Macro F1 delta</span>
+                          <strong style={styles.versionCompareDeltaValue}>{formatSignedMetricDelta(comparisonMacroF1Delta)}</strong>
+                        </div>
+                        <div style={styles.versionCompareDeltaCard}>
+                          <span style={styles.versionCompareDeltaLabel}>Eval loss delta</span>
+                          <strong style={styles.versionCompareDeltaValue}>{formatSignedMetricDelta(comparisonEvalLossDelta, { invertMeaning: true })}</strong>
+                        </div>
+                        <div style={styles.versionCompareDeltaCard}>
+                          <span style={styles.versionCompareDeltaLabel}>Record delta</span>
+                          <strong style={styles.versionCompareDeltaValue}>{comparisonRecordsDelta == null ? 'N/A' : `${comparisonRecordsDelta > 0 ? '+' : ''}${comparisonRecordsDelta}`}</strong>
+                        </div>
+                      </div>
+                      <div style={styles.versionCompareNarrative}>
+                        <span style={styles.versionCompareNarrativeLabel}>Comparison reading</span>
+                        <p style={styles.versionCompareNarrativeBody}>{comparisonSummary}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p style={styles.emptyPanelText}>At least two model versions are needed for comparison.</p>
+                )}
+              </div>
+            ) : null}
             {modelVersions.length > 0 ? (
               <>
                 <div style={styles.batchGrid}>
@@ -3303,6 +3424,57 @@ function dominantLabelShare(labelDistribution: Record<string, unknown>): number 
   const total = counts.reduce((sum, value) => sum + value, 0)
   if (total === 0) return null
   return Math.max(...counts) / total
+}
+
+function formatSignedMetricDelta(value: number | null, options?: { invertMeaning?: boolean }): string {
+  if (value == null) return 'N/A'
+  const rounded = Math.round(value * 1000) / 1000
+  const sign = rounded > 0 ? '+' : ''
+  const suffix = options?.invertMeaning ? ' lower is better' : ' higher is better'
+  return `${sign}${rounded}${suffix}`
+}
+
+function buildVersionComparisonSummary(
+  left: ModelVersion | null,
+  right: ModelVersion | null,
+): string {
+  if (!left || !right) {
+    return 'Pick two model versions to compare their metrics and dataset strength.'
+  }
+
+  const leftAccuracy = extractEvaluationMetric(left.metrics_json, 'status_accuracy') ?? 0
+  const rightAccuracy = extractEvaluationMetric(right.metrics_json, 'status_accuracy') ?? 0
+  const leftMacroF1 = extractEvaluationMetric(left.metrics_json, 'macro_f1') ?? 0
+  const rightMacroF1 = extractEvaluationMetric(right.metrics_json, 'macro_f1') ?? 0
+  const leftEvalLoss = extractEvaluationMetric(left.metrics_json, 'eval_loss')
+  const rightEvalLoss = extractEvaluationMetric(right.metrics_json, 'eval_loss')
+  const leftRecords = extractDatasetMetric(left.metrics_json, 'record_count') ?? 0
+  const rightRecords = extractDatasetMetric(right.metrics_json, 'record_count') ?? 0
+
+  const winner =
+    leftMacroF1 > rightMacroF1
+      ? left.model_name
+      : rightMacroF1 > leftMacroF1
+        ? right.model_name
+        : leftAccuracy > rightAccuracy
+          ? left.model_name
+          : right.model_name
+
+  const sizeCaution =
+    Math.abs(leftRecords - rightRecords) >= 15
+      ? 'The two runs used noticeably different dataset sizes, so metric gains are not fully apples-to-apples.'
+      : 'The dataset sizes are close enough that the comparison is reasonably fair for a dashboard reading.'
+
+  const lossReading =
+    leftEvalLoss != null && rightEvalLoss != null
+      ? leftEvalLoss < rightEvalLoss
+        ? `${left.model_name} also has the lower eval loss.`
+        : rightEvalLoss < leftEvalLoss
+          ? `${right.model_name} also has the lower eval loss.`
+          : 'Their eval loss is effectively tied.'
+      : 'Eval loss is missing for at least one version.'
+
+  return `${winner} looks stronger overall in this comparison. Macro F1 matters most here because it says more about label balance than raw accuracy alone. ${sizeCaution} ${lossReading}`
 }
 
 function stagePanelHighlight(
@@ -4783,6 +4955,120 @@ const styles: Record<string, CSSProperties> = {
     color: '#607367',
     fontSize: '13px',
     lineHeight: 1.55,
+  },
+  versionCompareShell: {
+    marginBottom: '18px',
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f4faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  versionCompareToolbar: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+  },
+  versionComparePicker: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  versionCompareLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#64796d',
+    fontWeight: 800,
+  },
+  versionCompareGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: '12px',
+  },
+  versionCompareCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  versionCompareCardLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#688073',
+    fontWeight: 800,
+  },
+  versionCompareCardTitle: {
+    margin: 0,
+    fontSize: '20px',
+    lineHeight: 1.25,
+    color: '#173c2d',
+  },
+  versionCompareCardMeta: {
+    margin: 0,
+    color: '#607367',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  versionCompareSummary: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  versionCompareDeltaGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: '10px',
+  },
+  versionCompareDeltaCard: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  versionCompareDeltaLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6a8174',
+    fontWeight: 800,
+  },
+  versionCompareDeltaValue: {
+    fontSize: '14px',
+    lineHeight: 1.4,
+    color: '#183d2f',
+    fontWeight: 800,
+  },
+  versionCompareNarrative: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  versionCompareNarrativeLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#698073',
+    fontWeight: 800,
+  },
+  versionCompareNarrativeBody: {
+    margin: 0,
+    color: '#52695d',
+    fontSize: '13px',
+    lineHeight: 1.6,
   },
   setupFlowGrid: {
     display: 'grid',
