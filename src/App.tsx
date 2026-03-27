@@ -1336,7 +1336,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 <div>
                   <h2 style={styles.cardTitle}>How This Pipeline Works</h2>
                   <p style={styles.cardSubtitle}>
-                    Training here is a guided lifecycle: curate records, export a batch, run one distillation job, register the output as a model version, then activate one version for future testing.
+                    Training here is a guided lifecycle: curate records, export a batch, run one distillation job, register the output as a model version, then activate one version for testing.
                   </p>
                 </div>
                 <span style={styles.batchBadge}>Workflow guide</span>
@@ -1408,7 +1408,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </div>
                 <div style={styles.artifactExplainRow}>
                   <span style={styles.artifactExplainBadge}>What it means</span>
-                  <span style={styles.artifactExplainText}>Future hosted inference will load the active base model and this artifact together. The active test model is the one version selected for that future runtime.</span>
+                  <span style={styles.artifactExplainText}>Hosted inference uses the active base model together with this artifact. The active test model is the one version currently selected to run.</span>
                 </div>
               </div>
             </ChartCard>
@@ -1420,7 +1420,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 <div>
                   <h2 style={styles.cardTitle}>Selected Test Model</h2>
                   <p style={styles.cardSubtitle}>
-                    This is the one version you would point future testing or hosted inference to. Everything else stays as history or standby.
+                    This is the one version currently selected for testing or hosted inference. Everything else stays as history or standby.
                   </p>
                 </div>
                 <span style={styles.batchBadge}>{activeModelVersion ? 'Active test model' : 'Not set'}</span>
@@ -1502,6 +1502,24 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                         <span>Base model {version.base_model}</span>
                         <span>Created {formatDateTime(version.created_at)}</span>
                       </div>
+                      <div style={styles.compactSummaryGrid}>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Accuracy</span>
+                          <strong style={styles.compactSummaryValue}>{formatMetricValue(extractEvaluationMetric(version.metrics_json, 'status_accuracy'))}</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Macro F1</span>
+                          <strong style={styles.compactSummaryValue}>{formatMetricValue(extractEvaluationMetric(version.metrics_json, 'macro_f1'))}</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Eval loss</span>
+                          <strong style={styles.compactSummaryValue}>{formatMetricValue(extractEvaluationMetric(version.metrics_json, 'eval_loss'))}</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Records</span>
+                          <strong style={styles.compactSummaryValue}>{String(extractDatasetMetric(version.metrics_json, 'record_count') ?? 'N/A')}</strong>
+                        </div>
+                      </div>
                       <div style={styles.artifactPanel}>
                         <span style={styles.jobMetricsTitle}>Artifact Location</span>
                         <span style={styles.jobMetricsText}>{version.artifact_uri ?? 'No artifact URI yet'}</span>
@@ -1530,7 +1548,6 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                           </button>
                         </div>
                       </div>
-                      {version.metrics_json ? <MetricsSummaryPanel metrics={version.metrics_json} /> : null}
                     </article>
                   ))}
                 </div>
@@ -1586,6 +1603,24 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                         <span>Mode {job.dataset_mode}</span>
                         <span>Created {formatDateTime(job.created_at)}</span>
                       </div>
+                      <div style={styles.compactSummaryGrid}>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Progress</span>
+                          <strong style={styles.compactSummaryValue}>{job.progress_percent}%</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Train</span>
+                          <strong style={styles.compactSummaryValue}>{job.train_record_count ?? 0}</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Validation</span>
+                          <strong style={styles.compactSummaryValue}>{job.validation_record_count ?? 0}</strong>
+                        </div>
+                        <div style={styles.compactSummaryItem}>
+                          <span style={styles.compactSummaryLabel}>Accuracy</span>
+                          <strong style={styles.compactSummaryValue}>{formatMetricValue(extractEvaluationMetric(job.metrics_json, 'status_accuracy'))}</strong>
+                        </div>
+                      </div>
                       <div style={styles.jobProgressShell}>
                         <div style={styles.jobProgressTop}>
                           <span style={styles.factLabel}>Pipeline progress</span>
@@ -1621,7 +1656,6 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                           <span style={styles.jobMetricsText}>{job.logs_json[job.logs_json.length - 1]?.message}</span>
                         </div>
                       ) : null}
-                      {job.metrics_json && job.status === 'completed' ? <MetricsSummaryPanel metrics={job.metrics_json} /> : null}
                       {job.artifact_uri ? (
                         <div style={styles.artifactPanel}>
                           <span style={styles.jobMetricsTitle}>Artifact</span>
@@ -2534,7 +2568,7 @@ function displayModelVersionStatus(status: string): string {
 }
 
 function describeModelVersionStatus(status: string): string {
-  if (status === 'active_test') return 'This is the currently selected version for future testing or hosted inference.'
+  if (status === 'active_test') return 'This is the currently selected version for testing or hosted inference.'
   if (status === 'ready_for_test') return 'This version is available, but not currently selected for testing.'
   if (status === 'archived') return 'This version is kept only for history and rollback.'
   return 'Model version status is available.'
@@ -3250,6 +3284,32 @@ const styles: Record<string, CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
     gap: '10px',
+  },
+  compactSummaryGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))',
+    gap: '8px',
+  },
+  compactSummaryItem: {
+    borderRadius: '12px',
+    background: '#ffffff',
+    border: '1px solid #e3ece5',
+    padding: '10px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px',
+  },
+  compactSummaryLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6c8072',
+    fontWeight: 800,
+  },
+  compactSummaryValue: {
+    fontSize: '20px',
+    lineHeight: 1,
+    color: '#173c2d',
   },
   metricCard: {
     borderRadius: '12px',
