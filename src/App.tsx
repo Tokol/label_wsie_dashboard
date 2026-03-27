@@ -1651,9 +1651,9 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
           <section style={styles.pipelinePanel}>
             <div style={styles.pipelinePanelHeader}>
               <div>
-                <h2 style={styles.cardTitle}>Distillation Metaphor</h2>
+                <h2 style={styles.cardTitle}>How Distillation Works In Label Wise</h2>
                 <p style={styles.cardSubtitle}>
-                  This visual borrows the shape of chemical distillation, but only as a metaphor. In this project the real meaning is knowledge transfer: teacher-labelled examples are filtered through curation and turned into a smaller student model artifact.
+                  The mobile app scans food labels and product data, the OpenAI-backed teacher produces structured decisions, the dashboard curates those records into training batches, and the resulting student artifact is prepared for lower-cost future inference.
                 </p>
               </div>
               <span style={styles.batchBadge}>{metaphorStageTone}</span>
@@ -1663,11 +1663,31 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               onSelectStage={setSelectedEducationStage}
               selectedStageOutput={selectedEducationCard.outputs}
             />
-            <div style={styles.metaphorLegend}>
-              <span style={styles.metaphorLegendPill}>Metaphor only</span>
-              <p style={styles.metaphorLegendText}>
-                Big vessel means richer teacher signal. The center filter means human curation. Small vessel means the compressed student-side result. Hugging Face stores the finished adapter after the transfer step, it does not perform the distillation by itself.
-              </p>
+            <div style={styles.diagramContextGrid}>
+              <article style={styles.diagramContextCard}>
+                <span style={styles.diagramContextLabel}>Data source</span>
+                <p style={styles.diagramContextBody}>
+                  Label Wise collects packaged food data from barcode scans and photo-based label capture, then stores the structured result records for review.
+                </p>
+              </article>
+              <article style={styles.diagramContextCard}>
+                <span style={styles.diagramContextLabel}>Teacher signal</span>
+                <p style={styles.diagramContextBody}>
+                  The current app flow uses the OpenAI-backed teacher path to produce the richer judgement, explanation, and label that supervise later student training.
+                </p>
+              </article>
+              <article style={styles.diagramContextCard}>
+                <span style={styles.diagramContextLabel}>Training handoff</span>
+                <p style={styles.diagramContextBody}>
+                  The dashboard filters those records into curated export batches. A training job uses one batch to produce one student artifact and one model version.
+                </p>
+              </article>
+              <article style={styles.diagramContextCard}>
+                <span style={styles.diagramContextLabel}>Artifact role</span>
+                <p style={styles.diagramContextBody}>
+                  Hugging Face stores the finished adapter after training. It is the artifact destination for later loading, not the system that generates the supervision signal.
+                </p>
+              </article>
             </div>
           </section>
 
@@ -2769,7 +2789,7 @@ function DistillationDiagram({
 
   return (
     <div style={styles.diagramShell}>
-      <svg viewBox="0 0 960 500" role="img" aria-label="Interactive knowledge distillation diagram" style={styles.diagramSvg}>
+      <svg viewBox="0 0 960 460" role="img" aria-label="Interactive knowledge distillation diagram" style={styles.diagramSvg}>
         <defs>
           <linearGradient id="teacherGlow" x1="0%" x2="100%">
             <stop offset="0%" stopColor="#f9fbff" />
@@ -2793,79 +2813,79 @@ function DistillationDiagram({
         </defs>
 
         <g onClick={() => onSelectStage('teacher')} style={styles.diagramPointer}>
-          <rect x="30" y="40" width="385" height="340" rx="26" fill="url(#teacherGlow)" stroke={teacherActive ? '#596fcb' : '#8da0e2'} strokeWidth={teacherActive ? 4 : 2.5} strokeDasharray="10 9" />
-          <text x="222" y="26" textAnchor="middle" style={styles.diagramHeading}>Teacher Model</text>
+          <rect x="36" y="50" width="372" height="274" rx="28" fill="url(#teacherGlow)" stroke={teacherActive ? '#596fcb' : '#8da0e2'} strokeWidth={teacherActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <text x="222" y="30" textAnchor="middle" style={styles.diagramHeading}>Teacher</text>
           {teacherConnections.map((line, index) => (
             <line key={`teacher-line-${index}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke={teacherActive ? '#5e6db0' : '#7d8494'} strokeWidth={teacherActive ? 2.5 : 2} opacity={teacherActive ? 0.9 : 0.7} />
           ))}
           {teacherNodes.map((node, index) => (
             <circle key={`teacher-node-${index}`} cx={node.x} cy={node.y} r={node.r} fill={node.fill} stroke={teacherActive ? '#ffffff' : '#f3f6fb'} strokeWidth="2.5" />
           ))}
-          <text x="222" y="356" textAnchor="middle" style={styles.diagramCaption}>
-            Teacher outputs from the app produce the richer supervision signal.
+          <text x="222" y="348" textAnchor="middle" style={styles.diagramCaption}>
+            App scans + OpenAI teacher outputs
           </text>
         </g>
 
         <g onClick={() => onSelectStage('training')} style={styles.diagramPointer}>
-          <text x="575" y="66" textAnchor="middle" style={styles.diagramHeading}>Knowledge Transfer</text>
-          <rect x="445" y="105" width="210" height="155" rx="24" fill="url(#transferGlow)" stroke={trainingActive ? '#d49d33' : '#d5bf83'} strokeWidth={trainingActive ? 4 : 2.5} strokeDasharray="10 9" />
-          <line x1="413" y1="182" x2="445" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
-          <line x1="655" y1="182" x2="710" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
-          <text x="550" y="165" textAnchor="middle" style={styles.diagramSmallLabel}>Distill</text>
-          <rect x="518" y="126" width="64" height="116" rx="10" fill="#ffffff" stroke={trainingActive ? '#a27416' : '#c2b281'} strokeWidth="2.5" />
-          <text x="550" y="186" textAnchor="middle" transform="rotate(90 550 186)" style={styles.diagramVerticalLabel}>Knowledge</text>
-          <text x="550" y="282" textAnchor="middle" style={styles.diagramCaption}>
-            Curated batches drive the actual training step.
+          <text x="575" y="68" textAnchor="middle" style={styles.diagramHeading}>Transfer</text>
+          <rect x="452" y="116" width="196" height="134" rx="28" fill="url(#transferGlow)" stroke={trainingActive ? '#d49d33' : '#d5bf83'} strokeWidth={trainingActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <line x1="408" y1="182" x2="452" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
+          <line x1="648" y1="182" x2="705" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
+          <text x="550" y="156" textAnchor="middle" style={styles.diagramSmallLabel}>Train</text>
+          <rect x="520" y="138" width="60" height="92" rx="14" fill="#fffdfa" stroke={trainingActive ? '#a27416' : '#c2b281'} strokeWidth="2.5" />
+          <text x="550" y="184" textAnchor="middle" transform="rotate(90 550 184)" style={styles.diagramVerticalLabel}>Signals</text>
+          <text x="550" y="272" textAnchor="middle" style={styles.diagramCaption}>
+            Curation + batch training
           </text>
         </g>
 
         <g onClick={() => onSelectStage('artifact')} style={styles.diagramPointer}>
-          <rect x="715" y="40" width="215" height="260" rx="26" fill="url(#studentGlow)" stroke={studentActive ? '#687ecc' : '#9eafe5'} strokeWidth={studentActive ? 4 : 2.5} strokeDasharray="10 9" />
-          <text x="823" y="26" textAnchor="middle" style={styles.diagramHeading}>Student Model</text>
+          <rect x="714" y="50" width="214" height="238" rx="28" fill="url(#studentGlow)" stroke={studentActive ? '#687ecc' : '#9eafe5'} strokeWidth={studentActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <text x="823" y="30" textAnchor="middle" style={styles.diagramHeading}>Student</text>
           {studentConnections.map((line, index) => (
             <line key={`student-line-${index}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke={studentActive ? '#6170b5' : '#7c8492'} strokeWidth={studentActive ? 2.5 : 2} opacity={studentActive ? 0.92 : 0.72} />
           ))}
           {studentNodes.map((node, index) => (
             <circle key={`student-node-${index}`} cx={node.x} cy={node.y} r={node.r} fill={node.fill} stroke={studentActive ? '#ffffff' : '#f3f6fb'} strokeWidth="2.5" />
           ))}
-          <text x="823" y="276" textAnchor="middle" style={styles.diagramCaption}>
-            Smaller model plus LoRA artifact for cheaper future serving.
+          <text x="823" y="312" textAnchor="middle" style={styles.diagramCaption}>
+            Qwen + LoRA artifact
           </text>
         </g>
 
         <g onClick={() => onSelectStage('curation')} style={styles.diagramPointer}>
-          <path d="M500 410 L600 410 L600 470 L500 470 Z" fill="url(#dataGlow)" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
-          <ellipse cx="550" cy="410" rx="50" ry="12" fill="#f8fcf8" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
-          <text x="550" y="444" textAnchor="middle" style={styles.diagramBoxLabel}>Curated Data</text>
-          <text x="550" y="462" textAnchor="middle" style={styles.diagramBoxSubLabel}>Reviewed export batch</text>
+          <path d="M500 350 L600 350 L600 412 L500 412 Z" fill="url(#dataGlow)" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
+          <ellipse cx="550" cy="350" rx="50" ry="12" fill="#f8fcf8" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
+          <text x="550" y="384" textAnchor="middle" style={styles.diagramBoxLabel}>Batch</text>
+          <text x="550" y="402" textAnchor="middle" style={styles.diagramBoxSubLabel}>Reviewed export set</text>
         </g>
 
         <g>
-          <line x1="550" y1="410" x2="550" y2="322" stroke="#6f7f76" strokeWidth="3" />
-          <line x1="550" y1="322" x2="222" y2="322" stroke="#6f7f76" strokeWidth="3" />
-          <line x1="822" y1="322" x2="822" y2="300" stroke="#6f7f76" strokeWidth="3" />
-          <line x1="550" y1="322" x2="822" y2="322" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="550" y1="350" x2="550" y2="308" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="550" y1="308" x2="222" y2="308" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="822" y1="308" x2="822" y2="288" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="550" y1="308" x2="822" y2="308" stroke="#6f7f76" strokeWidth="3" />
         </g>
 
         <g onClick={() => onSelectStage('activation')} style={styles.diagramPointer}>
-          <rect x="730" y="332" width="185" height="52" rx="16" fill="#f5f7f8" stroke={activationActive ? '#6b7b74' : '#c7d1cd'} strokeWidth={activationActive ? 4 : 2.5} />
-          <text x="822" y="353" textAnchor="middle" style={styles.diagramBoxLabel}>Activation</text>
-          <text x="822" y="371" textAnchor="middle" style={styles.diagramBoxSubLabel}>Select one active test model</text>
+          <rect x="720" y="350" width="206" height="58" rx="18" fill="#f5f7f8" stroke={activationActive ? '#6b7b74' : '#c7d1cd'} strokeWidth={activationActive ? 4 : 2.5} />
+          <text x="823" y="374" textAnchor="middle" style={styles.diagramBoxLabel}>Active Test Model</text>
+          <text x="823" y="393" textAnchor="middle" style={styles.diagramBoxSubLabel}>Selected version</text>
         </g>
       </svg>
 
       <div style={styles.diagramLegendRow}>
         <button type="button" style={teacherActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('teacher')}>
-          Teacher signal
+          Teacher
         </button>
         <button type="button" style={curationActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('curation')}>
-          Curated data
+          Batch
         </button>
         <button type="button" style={trainingActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('training')}>
-          Transfer step
+          Train
         </button>
         <button type="button" style={artifactActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('artifact')}>
-          Artifact output
+          Student
         </button>
         <button type="button" style={activationActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('activation')}>
           Activation
@@ -2873,7 +2893,7 @@ function DistillationDiagram({
       </div>
 
       <div style={styles.diagramOutputStrip}>
-        <span style={styles.diagramOutputLabel}>Current selected stage output</span>
+        <span style={styles.diagramOutputLabel}>Current Label Wise stage output</span>
         <strong style={styles.diagramOutputValue}>{selectedStageOutput}</strong>
       </div>
     </div>
@@ -3961,36 +3981,36 @@ const styles: Record<string, CSSProperties> = {
   diagramShell: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '14px',
+    gap: '18px',
   },
   diagramSvg: {
     width: '100%',
     height: 'auto',
     display: 'block',
-    borderRadius: '24px',
-    background: 'linear-gradient(180deg, #fbfdfc 0%, #f3f7f4 100%)',
+    borderRadius: '28px',
+    background: 'radial-gradient(circle at top center, rgba(111, 130, 217, 0.06), transparent 28%), linear-gradient(180deg, #fcfdfc 0%, #f1f6f3 100%)',
     border: '1px solid #dce7dd',
   },
   diagramPointer: {
     cursor: 'pointer',
   },
   diagramHeading: {
-    fontSize: '18px',
+    fontSize: '20px',
     fontWeight: 800,
     fill: '#24352d',
   },
   diagramCaption: {
-    fontSize: '13px',
+    fontSize: '12px',
     fill: '#5c6e63',
-    fontWeight: 600,
+    fontWeight: 700,
   },
   diagramSmallLabel: {
-    fontSize: '18px',
+    fontSize: '16px',
     fill: '#536074',
     fontWeight: 800,
   },
   diagramVerticalLabel: {
-    fontSize: '18px',
+    fontSize: '15px',
     fill: '#27342d',
     fontWeight: 800,
   },
@@ -4008,12 +4028,13 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     gap: '10px',
     flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   diagramLegendButton: {
     border: '1px solid #d4dfd6',
-    background: '#ffffff',
+    background: 'rgba(255,255,255,0.92)',
     color: '#2e493a',
-    padding: '8px 12px',
+    padding: '9px 13px',
     borderRadius: '999px',
     fontWeight: 700,
     fontSize: '12px',
@@ -4023,7 +4044,7 @@ const styles: Record<string, CSSProperties> = {
     border: '1px solid #7ca58d',
     background: '#ecf7ef',
     color: '#24673e',
-    padding: '8px 12px',
+    padding: '9px 13px',
     borderRadius: '999px',
     fontWeight: 800,
     fontSize: '12px',
@@ -4049,6 +4070,33 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '15px',
     lineHeight: 1.5,
     color: '#234032',
+  },
+  diagramContextGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+  },
+  diagramContextCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f5faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  diagramContextLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.09em',
+    color: '#607569',
+    fontWeight: 800,
+  },
+  diagramContextBody: {
+    margin: 0,
+    color: '#4f665a',
+    fontSize: '13px',
+    lineHeight: 1.6,
   },
   runTrustHero: {
     borderRadius: '20px',
