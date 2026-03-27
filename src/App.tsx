@@ -221,6 +221,7 @@ export function App() {
   const [selectedColabJobId, setSelectedColabJobId] = useState<number | null>(null)
   const [copyingColabCommand, setCopyingColabCommand] = useState(false)
   const [colabCommandCopied, setColabCommandCopied] = useState(false)
+  const [copiedColabStep, setCopiedColabStep] = useState<string | null>(null)
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
@@ -532,7 +533,7 @@ export function App() {
   --hf-repo-id IndraDThor/label-wise-qwen25-3b-lora \\
   --backend hf_peft_seqcls`
   }, [colabJob])
-  const colabCloneCommand = `git clone https://github.com/Tokol/label_wise_server.git
+  const colabCloneCommand = `!git clone https://github.com/Tokol/label_wise_server.git
 %cd label_wise_server`
   const colabInstallCommand = `!pip install -r requirements.txt
 !pip install torch transformers peft numpy accelerate datasets sentencepiece
@@ -843,6 +844,16 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
     }
   }
 
+  async function copyColabStep(stepKey: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedColabStep(stepKey)
+      window.setTimeout(() => setCopiedColabStep((current) => (current === stepKey ? null : current)), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy Colab step')
+    }
+  }
+
   async function openInColab(jobId: number) {
     const job = distillationJobs.find((item) => item.id === jobId)
     if (!job || job.status !== 'queued') return
@@ -874,6 +885,81 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
   const activeModelVersion = modelVersions.find((version) => version.status === 'active_test') ?? null
   const latestCompletedJob = distillationJobs.find((job) => job.status === 'completed') ?? null
   const latestCompletedVersion = modelVersions.find((version) => version.status !== 'archived') ?? modelVersions[0] ?? null
+  const latestTrainingMetrics = latestCompletedVersion?.metrics_json ?? latestCompletedJob?.metrics_json ?? null
+  const latestDatasetSummary =
+    latestTrainingMetrics && typeof latestTrainingMetrics.dataset_summary === 'object' && latestTrainingMetrics.dataset_summary !== null
+      ? (latestTrainingMetrics.dataset_summary as Record<string, unknown>)
+      : null
+  const latestLabelDistribution =
+    latestDatasetSummary && typeof latestDatasetSummary.label_distribution === 'object' && latestDatasetSummary.label_distribution !== null
+      ? (latestDatasetSummary.label_distribution as Record<string, unknown>)
+      : null
+  const trainingLifecycleCards = [
+    {
+      title: 'Curate records',
+      value: String(overview.approvedForDistillationRecords + overview.pendingReviewRecords),
+      subtitle: 'Review products first, then approve only the records that are useful for training.',
+    },
+    {
+      title: 'Export batches',
+      value: String(totalBatchCount),
+      subtitle: 'An export batch is the exact dataset package that gets handed into one training run.',
+    },
+    {
+      title: 'Run distillation',
+      value: String(totalJobCount),
+      subtitle: 'A distillation job is one fine-tuning attempt of the student model on one selected batch.',
+    },
+    {
+      title: 'Register versions',
+      value: String(totalModelVersionCount),
+      subtitle: 'Completed jobs become model versions with metrics and an artifact location.',
+    },
+    {
+      title: 'Activate one',
+      value: activeModelVersion?.model_name ?? 'None selected',
+      subtitle: 'Only one version should be active for testing at a time. Others stay on standby or archived.',
+    },
+  ]
+  const metricExplainers = [
+    {
+      label: 'Accuracy',
+      value: formatMetricValue(extractEvaluationMetric(latestTrainingMetrics, 'status_accuracy')),
+      meaning: 'How often the model predicted the correct label on validation examples.',
+      interpretation: 'Higher is better, but tiny datasets can make this look stronger than the model really is.',
+    },
+    {
+      label: 'Macro F1',
+      value: formatMetricValue(extractEvaluationMetric(latestTrainingMetrics, 'macro_f1')),
+      meaning: 'How balanced the model is across all labels, not just the most common class.',
+      interpretation: 'Higher is better. This is often more useful than raw accuracy when labels are uneven.',
+    },
+    {
+      label: 'Eval Loss',
+      value: formatMetricValue(extractEvaluationMetric(latestTrainingMetrics, 'eval_loss')),
+      meaning: 'A training-side measure of how wrong the model was during evaluation.',
+      interpretation: 'Lower is better. Read it together with Accuracy and Macro F1, not alone.',
+    },
+    {
+      label: 'Records',
+      value: String(extractDatasetMetric(latestTrainingMetrics, 'record_count') ?? 'N/A'),
+      meaning: 'How many examples the run used in total.',
+      interpretation: 'More records usually means the evaluation is more trustworthy.',
+    },
+  ]
+  const labelDistributionChart: ChartDatum[] = latestLabelDistribution
+    ? [
+        { label: 'Safe', value: numericRecordMetric(latestLabelDistribution.safe), tone: 'green' },
+        { label: 'Warning', value: numericRecordMetric(latestLabelDistribution.warning), tone: 'amber' },
+        { label: 'Unsafe', value: numericRecordMetric(latestLabelDistribution.unsafe), tone: 'red' },
+        { label: 'Cannot assess', value: numericRecordMetric(latestLabelDistribution.cannot_assess), tone: 'slate' },
+        { label: 'Unknown', value: numericRecordMetric(latestLabelDistribution.unknown), tone: 'slate' },
+      ]
+    : []
+  const trainValidationChart: ChartDatum[] = [
+    { label: 'Train records', value: extractDatasetMetric(latestTrainingMetrics, 'train') ?? 0, tone: 'green' },
+    { label: 'Validation records', value: extractDatasetMetric(latestTrainingMetrics, 'validation') ?? 0, tone: 'amber' },
+  ]
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -1244,6 +1330,90 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
 
       {activeWorkspace === 'training' ? (
         <>
+          <section style={styles.trainingEducationGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>How This Pipeline Works</h2>
+                  <p style={styles.cardSubtitle}>
+                    Training here is a guided lifecycle: curate records, export a batch, run one distillation job, register the output as a model version, then activate one version for future testing.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Workflow guide</span>
+              </div>
+              <div style={styles.educationFlowGrid}>
+                {trainingLifecycleCards.map((card, index) => (
+                  <article key={card.title} style={styles.educationFlowCard}>
+                    <div style={styles.educationFlowTop}>
+                      <span style={styles.factLabel}>{card.title}</span>
+                      {index < trainingLifecycleCards.length - 1 ? <span style={styles.flowArrow}>→</span> : null}
+                    </div>
+                    <strong style={styles.educationFlowValue}>{card.value}</strong>
+                    <p style={styles.educationFlowCopy}>{card.subtitle}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>How To Read The Metrics</h2>
+                  <p style={styles.cardSubtitle}>
+                    The latest finished run is summarized below in product language so you do not have to interpret raw training terminology on your own.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Latest run</span>
+              </div>
+              <div style={styles.metricExplainerGrid}>
+                {metricExplainers.map((item) => (
+                  <article key={item.label} style={styles.metricExplainerCard}>
+                    <div style={styles.metricExplainerTop}>
+                      <span style={styles.metricExplainerLabel}>{item.label}</span>
+                      <strong style={styles.metricExplainerValue}>{item.value}</strong>
+                    </div>
+                    <p style={styles.metricExplainerBody}>{item.meaning}</p>
+                    <p style={styles.metricExplainerHint}>{item.interpretation}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </section>
+
+          <section style={styles.analyticsStrip}>
+            <ChartCard
+              title="Latest Label Distribution"
+              subtitle="Shows what the latest training run actually learned from. If one label dominates, some metrics can look better than they really are."
+            >
+              <HorizontalBarChart data={labelDistributionChart} emptyLabel="Complete one real job to visualize the label mix used in training." />
+            </ChartCard>
+            <ChartCard
+              title="Train vs Validation Split"
+              subtitle="Training teaches the model. Validation checks whether it generalizes instead of only memorizing the exported batch."
+            >
+              <HorizontalBarChart data={trainValidationChart} emptyLabel="No train/validation split is available yet." />
+            </ChartCard>
+            <ChartCard
+              title="Artifact Meaning"
+              subtitle="The artifact is the trained LoRA adapter output. It is not the full Qwen model by itself."
+            >
+              <div style={styles.artifactExplainStack}>
+                <div style={styles.artifactExplainRow}>
+                  <span style={styles.artifactExplainBadge}>Base model</span>
+                  <span style={styles.artifactExplainText}>{activeModelVersion?.base_model ?? latestCompletedVersion?.base_model ?? 'Qwen/Qwen2.5-3B-Instruct'}</span>
+                </div>
+                <div style={styles.artifactExplainRow}>
+                  <span style={styles.artifactExplainBadge}>Adapter</span>
+                  <span style={styles.artifactExplainText}>{activeModelVersion?.artifact_uri ?? latestCompletedVersion?.artifact_uri ?? 'No artifact registered yet'}</span>
+                </div>
+                <div style={styles.artifactExplainRow}>
+                  <span style={styles.artifactExplainBadge}>What it means</span>
+                  <span style={styles.artifactExplainText}>Future hosted inference will load the active base model and this artifact together. The active test model is the one version selected for that future runtime.</span>
+                </div>
+              </div>
+            </ChartCard>
+          </section>
+
           <section style={styles.trainingControlStrip}>
             <section style={styles.pipelinePanel}>
               <div style={styles.pipelinePanelHeader}>
@@ -1581,23 +1751,48 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                       <span>Open a GPU-backed Colab notebook, then run these cells in order.</span>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 1. Clone the server repo</span>
+                      <div style={styles.colabStepHeader}>
+                        <span style={styles.colabStepLabel}>Step 1. Clone the server repo</span>
+                        <button type="button" style={styles.stepCopyButton} onClick={() => void copyColabStep('clone', colabCloneCommand)}>
+                          {copiedColabStep === 'clone' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
                       <pre style={styles.colabCodeBlock}>{colabCloneCommand}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 2. Install training dependencies</span>
+                      <div style={styles.colabStepHeader}>
+                        <span style={styles.colabStepLabel}>Step 2. Install training dependencies</span>
+                        <button type="button" style={styles.stepCopyButton} onClick={() => void copyColabStep('install', colabInstallCommand)}>
+                          {copiedColabStep === 'install' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
                       <pre style={styles.colabCodeBlock}>{colabInstallCommand}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 3. Log in to Hugging Face in the notebook</span>
+                      <div style={styles.colabStepHeader}>
+                        <span style={styles.colabStepLabel}>Step 3. Log in to Hugging Face in the notebook</span>
+                        <button type="button" style={styles.stepCopyButton} onClick={() => void copyColabStep('hf-login', colabHfLoginCommand)}>
+                          {copiedColabStep === 'hf-login' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
                       <pre style={styles.colabCodeBlock}>{colabHfLoginCommand}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 4. Run this job in Colab and upload the finished adapter to Hugging Face</span>
+                      <div style={styles.colabStepHeader}>
+                        <span style={styles.colabStepLabel}>Step 4. Run this job in Colab and upload the finished adapter to Hugging Face</span>
+                        <button type="button" style={styles.stepCopyButton} onClick={() => void copyColabStep('run', `!${colabCommand}`)}>
+                          {copiedColabStep === 'run' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
                       <pre style={styles.colabCodeBlock}>{`!${colabCommand}`}</pre>
                     </div>
                     <div style={styles.colabStepCard}>
-                      <span style={styles.colabStepLabel}>Step 5. Zip and download the artifact to your machine</span>
+                      <div style={styles.colabStepHeader}>
+                        <span style={styles.colabStepLabel}>Step 5. Zip and download the artifact to your machine</span>
+                        <button type="button" style={styles.stepCopyButton} onClick={() => void copyColabStep('download', artifactDownloadCommand)}>
+                          {copiedColabStep === 'download' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
                       <pre style={styles.colabCodeBlock}>{artifactDownloadCommand}</pre>
                     </div>
                     <div style={styles.batchActions}>
@@ -2322,6 +2517,10 @@ function extractDatasetMetric(metrics: Record<string, unknown> | null, key: stri
   return typeof value === 'number' ? value : null
 }
 
+function numericRecordMetric(value: unknown): number {
+  return typeof value === 'number' ? value : 0
+}
+
 function formatMetricValue(value: number | null): string {
   if (value == null) return 'N/A'
   return Number.isInteger(value) ? String(value) : value.toFixed(3)
@@ -2644,6 +2843,12 @@ const styles: Record<string, CSSProperties> = {
     gap: '20px',
     marginBottom: '20px',
   },
+  trainingEducationGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1.25fr 0.95fr',
+    gap: '20px',
+    marginBottom: '20px',
+  },
   summaryCard: {
     background: 'rgba(255,255,255,0.84)',
     borderRadius: '22px',
@@ -2728,6 +2933,88 @@ const styles: Record<string, CSSProperties> = {
   pipelineStageValue: {
     fontSize: '28px',
     color: '#1f3a2d',
+  },
+  educationFlowGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+  },
+  educationFlowCard: {
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f2f8f4 100%)',
+    borderRadius: '18px',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    minHeight: '150px',
+  },
+  educationFlowTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '8px',
+    alignItems: 'center',
+  },
+  flowArrow: {
+    fontSize: '18px',
+    color: '#5f7466',
+    fontWeight: 800,
+  },
+  educationFlowValue: {
+    fontSize: '24px',
+    lineHeight: 1.1,
+    color: '#173c2d',
+    overflowWrap: 'anywhere',
+  },
+  educationFlowCopy: {
+    margin: 0,
+    color: '#617466',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  metricExplainerGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+  },
+  metricExplainerCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  metricExplainerTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '10px',
+    alignItems: 'baseline',
+  },
+  metricExplainerLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6c8072',
+    fontWeight: 800,
+  },
+  metricExplainerValue: {
+    fontSize: '24px',
+    lineHeight: 1,
+    color: '#173c2d',
+  },
+  metricExplainerBody: {
+    margin: 0,
+    color: '#2f4a3b',
+    fontSize: '13px',
+    lineHeight: 1.5,
+  },
+  metricExplainerHint: {
+    margin: 0,
+    color: '#617466',
+    fontSize: '12px',
+    lineHeight: 1.5,
   },
   batchGrid: {
     display: 'grid',
@@ -2889,12 +3176,29 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'column',
     gap: '10px',
   },
+  colabStepHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+  },
   colabStepLabel: {
     fontSize: '12px',
     textTransform: 'uppercase',
     letterSpacing: '0.08em',
     color: '#6c8072',
     fontWeight: 800,
+  },
+  stepCopyButton: {
+    border: '1px solid #d4e0d6',
+    background: '#ffffff',
+    color: '#2a4d39',
+    padding: '6px 10px',
+    borderRadius: '999px',
+    fontWeight: 700,
+    fontSize: '12px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
   },
   colabCodeBlock: {
     margin: 0,
@@ -2974,6 +3278,34 @@ const styles: Record<string, CSSProperties> = {
     color: '#617466',
     fontSize: '12px',
     lineHeight: 1.45,
+  },
+  artifactExplainStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  artifactExplainRow: {
+    display: 'grid',
+    gridTemplateColumns: '120px minmax(0, 1fr)',
+    gap: '12px',
+    alignItems: 'start',
+  },
+  artifactExplainBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '999px',
+    padding: '7px 10px',
+    background: '#eef3ff',
+    color: '#37539a',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  artifactExplainText: {
+    color: '#244032',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    wordBreak: 'break-word',
   },
   analyticsStrip: {
     display: 'grid',
