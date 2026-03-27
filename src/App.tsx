@@ -225,6 +225,7 @@ export function App() {
   const [creatingJobBatchId, setCreatingJobBatchId] = useState<string | null>(null)
   const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(null)
   const [updatingModelVersionId, setUpdatingModelVersionId] = useState<number | null>(null)
+  const [selectedEducationStage, setSelectedEducationStage] = useState<'teacher' | 'curation' | 'training' | 'artifact' | 'activation'>('teacher')
 
   const INSTALLATIONS_PAGE_SIZE = 20
   const RECORDS_PAGE_SIZE = 25
@@ -894,6 +895,80 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
     latestDatasetSummary && typeof latestDatasetSummary.label_distribution === 'object' && latestDatasetSummary.label_distribution !== null
       ? (latestDatasetSummary.label_distribution as Record<string, unknown>)
       : null
+  const latestRecordCount = extractDatasetMetric(latestTrainingMetrics, 'record_count') ?? 0
+  const latestTrainCount = extractDatasetMetric(latestTrainingMetrics, 'train') ?? 0
+  const latestValidationCount = extractDatasetMetric(latestTrainingMetrics, 'validation') ?? 0
+  const latestCompleteInputRatio = latestDatasetSummary && typeof latestDatasetSummary.complete_input_ratio === 'number'
+    ? latestDatasetSummary.complete_input_ratio
+    : null
+  const latestPreferenceKeys =
+    latestDatasetSummary && Array.isArray(latestDatasetSummary.preference_keys)
+      ? latestDatasetSummary.preference_keys.filter((value): value is string => typeof value === 'string')
+      : []
+  const latestDominantLabelShare = latestLabelDistribution ? dominantLabelShare(latestLabelDistribution) : null
+  const runTrustSignals = [
+    {
+      label: 'Dataset size',
+      value: latestRecordCount > 0 ? String(latestRecordCount) : 'No run yet',
+      tone: latestRecordCount >= 40 ? 'good' : latestRecordCount >= 12 ? 'watch' : 'risk',
+      body:
+        latestRecordCount >= 40
+          ? 'Enough examples to make the latest metrics more believable for a prototype run.'
+          : latestRecordCount >= 12
+            ? 'Usable for pipeline testing, but still small enough that metrics may swing a lot.'
+            : 'Very small sample. Treat strong-looking metrics as demonstration-only.',
+    },
+    {
+      label: 'Validation split',
+      value: latestValidationCount > 0 ? `${latestTrainCount} / ${latestValidationCount}` : 'Missing',
+      tone: latestValidationCount >= 5 ? 'good' : latestValidationCount >= 2 ? 'watch' : 'risk',
+      body:
+        latestValidationCount >= 5
+          ? 'There are enough held-out examples to give the latest evaluation at least some friction.'
+          : latestValidationCount >= 2
+            ? 'A validation split exists, but it is still thin and easy to overread.'
+            : 'Without a meaningful validation slice, the reported metrics are weak evidence.',
+    },
+    {
+      label: 'Label balance',
+      value: latestDominantLabelShare == null ? 'Unknown' : `${Math.round(latestDominantLabelShare * 100)}% dominant`,
+      tone: latestDominantLabelShare != null && latestDominantLabelShare <= 0.55 ? 'good' : latestDominantLabelShare != null && latestDominantLabelShare <= 0.75 ? 'watch' : 'risk',
+      body:
+        latestDominantLabelShare != null && latestDominantLabelShare <= 0.55
+          ? 'No single label dominates too heavily, so accuracy is less likely to be inflated by class imbalance.'
+          : latestDominantLabelShare != null && latestDominantLabelShare <= 0.75
+            ? 'One label is pulling ahead. Macro F1 matters more than raw accuracy for this run.'
+            : 'The batch is heavily skewed toward one label. Accuracy alone is not trustworthy here.',
+    },
+    {
+      label: 'Input completeness',
+      value: latestCompleteInputRatio == null ? 'Unknown' : `${Math.round(latestCompleteInputRatio * 100)}% complete`,
+      tone: latestCompleteInputRatio != null && latestCompleteInputRatio >= 0.8 ? 'good' : latestCompleteInputRatio != null && latestCompleteInputRatio >= 0.5 ? 'watch' : 'risk',
+      body:
+        latestCompleteInputRatio != null && latestCompleteInputRatio >= 0.8
+          ? 'Most examples include the fields the student needs, which helps the run reflect real usage better.'
+          : latestCompleteInputRatio != null && latestCompleteInputRatio >= 0.5
+            ? 'Many examples are usable, but there is still enough missing structure to weaken the training signal.'
+            : 'A large share of examples are incomplete. Improve record quality before trusting the next run.',
+    },
+  ]
+  const trustSummaryTone = runTrustSignals.filter((signal) => signal.tone === 'risk').length > 1
+    ? 'risk'
+    : runTrustSignals.some((signal) => signal.tone === 'watch')
+      ? 'watch'
+      : 'good'
+  const trustSummaryTitle =
+    trustSummaryTone === 'good'
+      ? 'Latest run is reasonably interpretable'
+      : trustSummaryTone === 'watch'
+        ? 'Latest run is useful, but still easy to overread'
+        : 'Latest run is mainly pipeline proof, not strong evidence'
+  const trustSummaryCopy =
+    trustSummaryTone === 'good'
+      ? 'Use the metrics as an early research signal, while still validating with more batches over time.'
+      : trustSummaryTone === 'watch'
+        ? 'The run says something real about the workflow, but dataset size or balance still limits how much confidence you should place in the numbers.'
+        : 'Treat this run as confirmation that the collection and training flow works. Improve curation volume and balance before drawing performance conclusions.'
   const trainingLifecycleCards = [
     {
       title: 'Curate records',
@@ -1030,6 +1105,106 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
       copy: 'Keep artifacts in Hugging Face and bring up a separate GPU inference runtime only when you need it.',
     },
   ]
+  const educationStages = [
+    {
+      id: 'teacher' as const,
+      eyebrow: 'Stage 1',
+      title: 'Teacher records arrive from the mobile app',
+      summary: 'The app uploads structured examples containing product data, preferences, and teacher output.',
+      details:
+        'This is the supervision source for the whole research pipeline. The stronger teacher signal comes from the existing app flow, not from the student model.',
+      inputs: 'Uploaded record payloads from the Flutter app',
+      outputs: 'Stored analysis records ready for dashboard review',
+      risk: 'If the teacher output is noisy or incomplete, the student will learn from bad examples.',
+    },
+    {
+      id: 'curation' as const,
+      eyebrow: 'Stage 2',
+      title: 'Curate and export a clean batch',
+      summary: 'The dashboard filters records, approves the useful ones, and exports them as one JSONL training batch.',
+      details:
+        'This is the quality gate. Distillation here does not mean every collected record should be used. It means only reviewed examples become training material.',
+      inputs: 'Reviewed records with lifecycle states such as pending, approved, or excluded',
+      outputs: 'A versioned export batch that can be downloaded or passed into one job',
+      risk: 'Metrics become misleading when the batch is too small, too imbalanced, or full of edge cases that were never reviewed.',
+    },
+    {
+      id: 'training' as const,
+      eyebrow: 'Stage 3',
+      title: 'Run one distillation job',
+      summary: 'A worker or Colab run trains a lightweight adapter on top of the Qwen base model.',
+      details:
+        'This is the real training attempt. The student model is smaller and cheaper to serve later, while the teacher remains the richer source of supervision.',
+      inputs: 'One exported batch, one base model, one training configuration',
+      outputs: 'Metrics, logs, and one trained adapter artifact',
+      risk: 'A completed run is not automatically a good run. You still need to read metrics and dataset size together.',
+    },
+    {
+      id: 'artifact' as const,
+      eyebrow: 'Stage 4',
+      title: 'Register the artifact and store it in Hugging Face',
+      summary: 'The finished adapter can be uploaded to Hugging Face and the stored URL becomes the artifact location shown in the dashboard.',
+      details:
+        'In this project, Hugging Face is the model-artifact storage and handoff layer. It keeps the trained adapter files accessible for later loading, sharing, or deployment.',
+      inputs: 'A completed training output folder such as model_artifact/',
+      outputs: 'An artifact URI, often a Hugging Face path, attached to the model version',
+      risk: 'If the artifact only exists in Colab and is never uploaded or downloaded, it is temporary and easy to lose.',
+    },
+    {
+      id: 'activation' as const,
+      eyebrow: 'Stage 5',
+      title: 'Mark one version active for testing',
+      summary: 'The dashboard marks one model version as the active test model and the server exposes its metadata.',
+      details:
+        'This step selects which artifact the future inference runtime should use. Right now the public inference contract exists, but real hosted inference is still deferred.',
+      inputs: 'One completed model version with artifact metadata',
+      outputs: 'A single active test model for API lookup and future runtime loading',
+      risk: 'Activation is only selection metadata today. It does not mean live model serving is already running.',
+    },
+  ]
+  const selectedEducationCard = educationStages.find((stage) => stage.id === selectedEducationStage) ?? educationStages[0]
+  const huggingFaceFacts = [
+    {
+      label: 'What Hugging Face is here',
+      value: 'Artifact storage',
+      body: 'It stores the trained adapter files and gives the project a durable model path to keep or reuse later.',
+    },
+    {
+      label: 'What gets uploaded',
+      value: 'Model artifact folder',
+      body: 'The finished adapter output from training, plus the files that describe metrics, config, and the training snapshot.',
+    },
+    {
+      label: 'What the dashboard receives',
+      value: 'Artifact URI',
+      body: 'The server saves the returned Hugging Face path and the dashboard shows it in jobs, versions, and the active model panel.',
+    },
+    {
+      label: 'What is not live yet',
+      value: 'Hosted inference',
+      body: 'The current dashboard and API can point to the active artifact, but the real student-model inference runtime is still a later step.',
+    },
+  ]
+  const implementationStateCards = [
+    {
+      title: 'Implemented now',
+      copy: 'Record collection, review, export batches, distillation jobs, artifact registration, Hugging Face upload guidance, and active-model selection are already part of the workflow.',
+    },
+    {
+      title: 'Deferred for later',
+      copy: 'Real online student inference is intentionally postponed because serving costs are high. The project keeps the artifact path and activation flow ready for that later phase.',
+    },
+  ]
+  const metaphorStageTone =
+    selectedEducationStage === 'teacher'
+      ? 'Teacher-heavy'
+      : selectedEducationStage === 'curation'
+        ? 'Quality gate'
+        : selectedEducationStage === 'training'
+          ? 'Transfer in progress'
+          : selectedEducationStage === 'artifact'
+            ? 'Artifact handoff'
+            : 'Activation ready'
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -1400,6 +1575,68 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
 
       {activeWorkspace === 'training' ? (
         <>
+          <section style={styles.pipelinePanel}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>Distillation Metaphor</h2>
+                <p style={styles.cardSubtitle}>
+                  This visual borrows the shape of chemical distillation, but only as a metaphor. In this project the real meaning is knowledge transfer: teacher-labelled examples are filtered through curation and turned into a smaller student model artifact.
+                </p>
+              </div>
+              <span style={styles.batchBadge}>{metaphorStageTone}</span>
+            </div>
+            <div style={styles.metaphorScene}>
+              <article style={styles.metaphorVesselLarge}>
+                <span style={styles.metaphorLabel}>Large vessel</span>
+                <h3 style={styles.metaphorTitle}>Teacher knowledge</h3>
+                <p style={styles.metaphorBody}>
+                  Richer reasoning from the current app flow and teacher output. This side carries the expensive intelligence and produces the supervision signal.
+                </p>
+                <div style={styles.metaphorLiquidStack}>
+                  <span style={{ ...styles.metaphorLiquidBand, width: '88%', background: 'linear-gradient(90deg, #1b6d49 0%, #4fc08d 100%)' }}>Teacher result</span>
+                  <span style={{ ...styles.metaphorLiquidBand, width: '78%', background: 'linear-gradient(90deg, #2f7a4b 0%, #6fc8a1 100%)' }}>Preferences</span>
+                  <span style={{ ...styles.metaphorLiquidBand, width: '70%', background: 'linear-gradient(90deg, #2d8f63 0%, #8fd7b7 100%)' }}>Product facts</span>
+                </div>
+              </article>
+
+              <div style={styles.metaphorConnector}>
+                <div style={styles.metaphorPipe} />
+                <div style={styles.metaphorFilterCore}>
+                  <span style={styles.metaphorFilterLabel}>Curation filter</span>
+                  <strong style={styles.metaphorFilterValue}>{selectedEducationStage === 'curation' ? 'Review active' : 'Approve only useful records'}</strong>
+                  <p style={styles.metaphorFilterText}>
+                    The dashboard decides what continues into training and what gets excluded.
+                  </p>
+                </div>
+                <div style={styles.metaphorPipe} />
+              </div>
+
+              <article style={styles.metaphorVesselSmall}>
+                <span style={styles.metaphorLabel}>Small vessel</span>
+                <h3 style={styles.metaphorTitle}>Student model</h3>
+                <p style={styles.metaphorBody}>
+                  A smaller Qwen-based model plus LoRA adapter that is cheaper to host later, but only after the workflow has produced a usable artifact.
+                </p>
+                <div style={styles.metaphorOutputStack}>
+                  <div style={styles.metaphorOutputCard}>
+                    <span style={styles.metaphorOutputLabel}>Current output</span>
+                    <strong style={styles.metaphorOutputValue}>{selectedEducationCard.outputs}</strong>
+                  </div>
+                  <div style={styles.metaphorOutputCard}>
+                    <span style={styles.metaphorOutputLabel}>Future role</span>
+                    <strong style={styles.metaphorOutputValue}>Lower-cost inference when serving is added later</strong>
+                  </div>
+                </div>
+              </article>
+            </div>
+            <div style={styles.metaphorLegend}>
+              <span style={styles.metaphorLegendPill}>Metaphor only</span>
+              <p style={styles.metaphorLegendText}>
+                Big vessel means richer teacher signal. The center filter means human curation. Small vessel means the compressed student-side result. Hugging Face stores the finished adapter after the transfer step, it does not perform the distillation by itself.
+              </p>
+            </div>
+          </section>
+
           <section style={styles.trainingEducationGrid}>
             <section style={styles.pipelinePanel}>
               <div style={styles.pipelinePanelHeader}>
@@ -1450,6 +1687,62 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             </section>
           </section>
 
+          <section style={styles.trainingEducationGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Interactive Process Guide</h2>
+                  <p style={styles.cardSubtitle}>
+                    Follow the actual research flow from teacher output to model artifact. Click a stage to see what goes in, what comes out, and what the dashboard is responsible for.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Step by step</span>
+              </div>
+              <div style={styles.educationStageRail}>
+                {educationStages.map((stage, index) => (
+                  <button
+                    key={stage.id}
+                    type="button"
+                    style={selectedEducationStage === stage.id ? styles.educationStageButtonActive : styles.educationStageButton}
+                    onClick={() => setSelectedEducationStage(stage.id)}
+                  >
+                    <span style={styles.educationStageEyebrow}>{stage.eyebrow}</span>
+                    <strong style={styles.educationStageTitle}>{stage.title}</strong>
+                    <span style={styles.educationStageSummary}>{stage.summary}</span>
+                    {index < educationStages.length - 1 ? <span style={styles.educationStageArrow}>→</span> : null}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>{selectedEducationCard.title}</h2>
+                  <p style={styles.cardSubtitle}>{selectedEducationCard.summary}</p>
+                </div>
+                <span style={styles.batchBadge}>{selectedEducationCard.eyebrow}</span>
+              </div>
+              <div style={styles.educationDetailCard}>
+                <p style={styles.educationDetailLead}>{selectedEducationCard.details}</p>
+                <div style={styles.educationDetailGrid}>
+                  <article style={styles.educationDetailBlock}>
+                    <span style={styles.educationDetailLabel}>Input</span>
+                    <p style={styles.educationDetailBody}>{selectedEducationCard.inputs}</p>
+                  </article>
+                  <article style={styles.educationDetailBlock}>
+                    <span style={styles.educationDetailLabel}>Output</span>
+                    <p style={styles.educationDetailBody}>{selectedEducationCard.outputs}</p>
+                  </article>
+                  <article style={styles.educationDetailBlock}>
+                    <span style={styles.educationDetailLabel}>Why it matters</span>
+                    <p style={styles.educationDetailBody}>{selectedEducationCard.risk}</p>
+                  </article>
+                </div>
+              </div>
+            </section>
+          </section>
+
           <section style={styles.analyticsStrip}>
             <ChartCard
               title="Latest Label Distribution"
@@ -1482,6 +1775,98 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </div>
               </div>
             </ChartCard>
+          </section>
+
+          <section style={styles.trainingEducationGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Is This Run Trustworthy?</h2>
+                  <p style={styles.cardSubtitle}>
+                    These checks translate the latest dataset summary into a simple research judgement. They are meant to stop the dashboard from making tiny or skewed runs look more convincing than they are.
+                  </p>
+                </div>
+                <span style={trustSummaryTone === 'good' ? styles.batchReadyPill : trustSummaryTone === 'watch' ? styles.miniStatusWarning : styles.miniStatusUnsafe}>
+                  {trustSummaryTone === 'good' ? 'Reasonably stable' : trustSummaryTone === 'watch' ? 'Read carefully' : 'Early signal only'}
+                </span>
+              </div>
+              <div style={styles.runTrustHero}>
+                <h3 style={styles.runTrustTitle}>{trustSummaryTitle}</h3>
+                <p style={styles.runTrustCopy}>{trustSummaryCopy}</p>
+                <div style={styles.runTrustMeta}>
+                  <span style={styles.miniStagePill}>Preference keys: {latestPreferenceKeys.length > 0 ? latestPreferenceKeys.join(', ') : 'None recorded'}</span>
+                  <span style={styles.miniStagePillSecondary}>Latest source: {latestCompletedVersion ? 'Model version metrics' : latestCompletedJob ? 'Job metrics' : 'No completed run'}</span>
+                </div>
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Trust Signals</h2>
+                  <p style={styles.cardSubtitle}>
+                    Read these before interpreting Accuracy or Macro F1. They describe whether the latest run was measured under conditions that are even worth comparing.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Quality checks</span>
+              </div>
+              <div style={styles.runTrustGrid}>
+                {runTrustSignals.map((signal) => (
+                  <article key={signal.label} style={styles.runTrustCard}>
+                    <div style={styles.runTrustCardTop}>
+                      <span style={styles.runTrustLabel}>{signal.label}</span>
+                      <span style={signal.tone === 'good' ? styles.runTrustPillGood : signal.tone === 'watch' ? styles.runTrustPillWatch : styles.runTrustPillRisk}>
+                        {signal.value}
+                      </span>
+                    </div>
+                    <p style={styles.runTrustCardBody}>{signal.body}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </section>
+
+          <section style={styles.trainingEducationGrid}>
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>What Hugging Face Does Here</h2>
+                  <p style={styles.cardSubtitle}>
+                    Hugging Face is the artifact destination in this workflow. It is where the trained adapter can live after a run so the project has a reusable model path instead of leaving the output trapped inside Colab.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Artifact handoff</span>
+              </div>
+              <div style={styles.hfFactsGrid}>
+                {huggingFaceFacts.map((fact) => (
+                  <article key={fact.label} style={styles.hfFactCard}>
+                    <span style={styles.hfFactLabel}>{fact.label}</span>
+                    <strong style={styles.hfFactValue}>{fact.value}</strong>
+                    <p style={styles.hfFactBody}>{fact.body}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section style={styles.pipelinePanel}>
+              <div style={styles.pipelinePanelHeader}>
+                <div>
+                  <h2 style={styles.cardTitle}>Current Implementation State</h2>
+                  <p style={styles.cardSubtitle}>
+                    This dashboard should separate what already works from what is intentionally postponed. That matters for a thesis demo because the artifact pipeline is real even though full hosted inference is not.
+                  </p>
+                </div>
+                <span style={styles.batchBadge}>Research scope</span>
+              </div>
+              <div style={styles.implementationStateGrid}>
+                {implementationStateCards.map((item) => (
+                  <article key={item.title} style={styles.implementationStateCard}>
+                    <h3 style={styles.implementationStateTitle}>{item.title}</h3>
+                    <p style={styles.implementationStateCopy}>{item.copy}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
           </section>
 
           <section style={styles.trainingEducationGrid}>
@@ -1549,7 +1934,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
           </section>
 
           <section style={styles.trainingControlStrip}>
-            <section style={styles.pipelinePanel}>
+            <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['activation']) }}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
                   <h2 style={styles.cardTitle}>Selected Test Model</h2>
@@ -1558,6 +1943,12 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                   </p>
                 </div>
                 <span style={styles.batchBadge}>{activeModelVersion ? 'Active test model' : 'Not set'}</span>
+              </div>
+              <div style={styles.stageContextBar}>
+                <span style={styles.stageContextPill}>Stage 5</span>
+                <p style={styles.stageContextText}>
+                  This is the final selection layer of the workflow. It points to the version the future runtime should use, even though full hosted inference is still deferred.
+                </p>
               </div>
               {activeModelVersion ? (
                 <div style={styles.batchMetaList}>
@@ -1571,7 +1962,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               )}
             </section>
 
-            <section style={styles.pipelinePanel}>
+            <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['training', 'artifact']) }}>
               <div style={styles.pipelinePanelHeader}>
                 <div>
                   <h2 style={styles.cardTitle}>Latest Training Result</h2>
@@ -1606,7 +1997,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             </section>
           </section>
 
-          <section style={styles.pipelinePanel}>
+          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['artifact', 'activation']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Model Versions</h2>
@@ -1615,6 +2006,12 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </p>
               </div>
               <span style={styles.batchBadge}>{totalModelVersionCount} versions</span>
+            </div>
+            <div style={styles.stageContextBar}>
+              <span style={styles.stageContextPill}>Stages 4-5</span>
+              <p style={styles.stageContextText}>
+                Completed jobs turn into version records here. This is the bridge between a finished artifact and an activatable model choice.
+              </p>
             </div>
             {modelVersions.length > 0 ? (
               <>
@@ -1635,6 +2032,11 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                         <span>Batch {version.batch_id}</span>
                         <span>Base model {version.base_model}</span>
                         <span>Created {formatDateTime(version.created_at)}</span>
+                      </div>
+                      <div style={styles.batchStatusRow}>
+                        <span style={styles.miniStagePill}>Registered version</span>
+                        {version.artifact_uri ? <span style={styles.miniStagePillSecondary}>Artifact attached</span> : <span style={styles.miniStagePillMuted}>Artifact pending</span>}
+                        {version.status === 'active_test' ? <span style={styles.miniStagePillAccent}>Activation target</span> : null}
                       </div>
                       <div style={styles.compactSummaryGrid}>
                         <div style={styles.compactSummaryItem}>
@@ -1707,7 +2109,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             )}
           </section>
 
-          <section style={styles.pipelinePanel}>
+          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['training']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Distillation Jobs</h2>
@@ -1716,6 +2118,12 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </p>
               </div>
               <span style={styles.batchBadge}>{totalJobCount} jobs</span>
+            </div>
+            <div style={styles.stageContextBar}>
+              <span style={styles.stageContextPill}>Stage 3</span>
+              <p style={styles.stageContextText}>
+                A job is one concrete training attempt. It consumes one curated batch and may emit the artifact that later becomes a version.
+              </p>
             </div>
             {distillationJobs.length > 0 ? (
               <>
@@ -1736,6 +2144,11 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                         <span>Task {job.task_type}</span>
                         <span>Mode {job.dataset_mode}</span>
                         <span>Created {formatDateTime(job.created_at)}</span>
+                      </div>
+                      <div style={styles.batchStatusRow}>
+                        <span style={styles.miniStagePill}>Training attempt</span>
+                        {job.artifact_uri ? <span style={styles.miniStagePillSecondary}>Artifact emitted</span> : <span style={styles.miniStagePillMuted}>No artifact yet</span>}
+                        {job.status === 'queued' ? <span style={styles.miniStagePillAccent}>Ready for Colab</span> : null}
                       </div>
                       <div style={styles.compactSummaryGrid}>
                         <div style={styles.compactSummaryItem}>
@@ -1822,7 +2235,7 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
             )}
           </section>
 
-          <section style={styles.pipelinePanel}>
+          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation']) }}>
             <div style={styles.pipelinePanelHeader}>
               <div>
                 <h2 style={styles.cardTitle}>Export Batches</h2>
@@ -1831,6 +2244,12 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </p>
               </div>
               <span style={styles.batchBadge}>{totalBatchCount} batches</span>
+            </div>
+            <div style={styles.stageContextBar}>
+              <span style={styles.stageContextPill}>Stage 2</span>
+              <p style={styles.stageContextText}>
+                This is the curated dataset handoff. Batch quality controls the usefulness of every later job, metric, and artifact.
+              </p>
             </div>
             <div style={styles.batchToolbar}>
               <input
@@ -1863,6 +2282,10 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                         <span>{batch.exported_count} records</span>
                         <span>{batch.exported_at ? `Exported ${formatDateTime(batch.exported_at)}` : 'Export time not available'}</span>
                         <span>{batch.last_used_in_training_at ? `Last trained ${formatDateTime(batch.last_used_in_training_at)}` : 'Not yet trained'}</span>
+                      </div>
+                      <div style={styles.batchStatusRow}>
+                        <span style={styles.miniStagePill}>Curated dataset</span>
+                        {batch.ready_for_training ? <span style={styles.miniStagePillSecondary}>Job can start</span> : <span style={styles.miniStagePillMuted}>Already consumed</span>}
                       </div>
                       <div style={styles.batchStatusRow}>
                         <span style={styles.miniStatusSafe}>Safe {batch.safe_count}</span>
@@ -2689,6 +3112,39 @@ function numericRecordMetric(value: unknown): number {
   return typeof value === 'number' ? value : 0
 }
 
+function dominantLabelShare(labelDistribution: Record<string, unknown>): number | null {
+  const counts = Object.values(labelDistribution)
+    .map((value) => (typeof value === 'number' ? value : 0))
+    .filter((value) => value > 0)
+  if (counts.length === 0) return null
+  const total = counts.reduce((sum, value) => sum + value, 0)
+  if (total === 0) return null
+  return Math.max(...counts) / total
+}
+
+function stagePanelHighlight(
+  selectedStage: 'teacher' | 'curation' | 'training' | 'artifact' | 'activation',
+  panelStages: Array<'teacher' | 'curation' | 'training' | 'artifact' | 'activation'>,
+): CSSProperties {
+  if (!panelStages.includes(selectedStage)) {
+    return {}
+  }
+
+  if (selectedStage === 'curation') {
+    return styles.pipelinePanelHighlightGreen
+  }
+  if (selectedStage === 'training') {
+    return styles.pipelinePanelHighlightBlue
+  }
+  if (selectedStage === 'artifact') {
+    return styles.pipelinePanelHighlightAmber
+  }
+  if (selectedStage === 'activation') {
+    return styles.pipelinePanelHighlightSlate
+  }
+  return styles.pipelinePanelHighlightTeacher
+}
+
 function setupFlowAccent(accent: 'teacher' | 'curation' | 'student' | 'artifact'): CSSProperties {
   if (accent === 'teacher') {
     return {
@@ -3079,6 +3535,31 @@ const styles: Record<string, CSSProperties> = {
     padding: '20px',
     marginBottom: '20px',
   },
+  pipelinePanelHighlightTeacher: {
+    borderColor: '#d8c9f8',
+    boxShadow: '0 18px 34px rgba(114, 82, 184, 0.14)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(246, 241, 255, 0.96) 100%)',
+  },
+  pipelinePanelHighlightGreen: {
+    borderColor: '#b8d7c3',
+    boxShadow: '0 18px 34px rgba(36, 103, 62, 0.14)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(239, 248, 242, 0.96) 100%)',
+  },
+  pipelinePanelHighlightBlue: {
+    borderColor: '#c7d9f2',
+    boxShadow: '0 18px 34px rgba(53, 87, 150, 0.14)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(239, 244, 255, 0.96) 100%)',
+  },
+  pipelinePanelHighlightAmber: {
+    borderColor: '#ecd8a8',
+    boxShadow: '0 18px 34px rgba(151, 114, 35, 0.14)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255, 248, 233, 0.97) 100%)',
+  },
+  pipelinePanelHighlightSlate: {
+    borderColor: '#cfd8d4',
+    boxShadow: '0 18px 34px rgba(83, 101, 93, 0.14)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(244, 247, 246, 0.97) 100%)',
+  },
   pipelinePanelHeader: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -3095,6 +3576,35 @@ const styles: Record<string, CSSProperties> = {
     color: '#37539a',
     fontWeight: 700,
     fontSize: '12px',
+  },
+  stageContextBar: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    marginBottom: '14px',
+    padding: '12px 14px',
+    borderRadius: '16px',
+    background: '#f7faf8',
+    border: '1px solid #e1ebe4',
+  },
+  stageContextPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '7px 10px',
+    background: '#eaf2ff',
+    color: '#355796',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  stageContextText: {
+    margin: 0,
+    color: '#5d7065',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    flex: 1,
+    minWidth: '220px',
   },
   pipelineStageGrid: {
     display: 'grid',
@@ -3126,6 +3636,254 @@ const styles: Record<string, CSSProperties> = {
   pipelineStageValue: {
     fontSize: '28px',
     color: '#1f3a2d',
+  },
+  metaphorScene: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(220px, 1fr) minmax(180px, 0.65fr) minmax(220px, 1fr)',
+    gap: '18px',
+    alignItems: 'center',
+  },
+  metaphorVesselLarge: {
+    borderRadius: '34px 34px 26px 26px',
+    border: '1px solid #b6d9c4',
+    background: 'linear-gradient(180deg, rgba(248, 253, 249, 0.98) 0%, rgba(225, 244, 232, 0.96) 100%)',
+    minHeight: '300px',
+    padding: '18px 18px 20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    boxShadow: 'inset 0 -30px 80px rgba(76, 187, 133, 0.14)',
+  },
+  metaphorVesselSmall: {
+    borderRadius: '28px 28px 22px 22px',
+    border: '1px solid #c7d7f2',
+    background: 'linear-gradient(180deg, rgba(251, 252, 255, 0.98) 0%, rgba(236, 241, 255, 0.96) 100%)',
+    minHeight: '252px',
+    padding: '18px 18px 20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    boxShadow: 'inset 0 -20px 60px rgba(104, 138, 226, 0.12)',
+  },
+  metaphorLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    color: '#62776a',
+    fontWeight: 800,
+  },
+  metaphorTitle: {
+    margin: 0,
+    fontSize: '24px',
+    lineHeight: 1.1,
+    color: '#173c2d',
+  },
+  metaphorBody: {
+    margin: 0,
+    color: '#3f5a4b',
+    fontSize: '13px',
+    lineHeight: 1.6,
+  },
+  metaphorLiquidStack: {
+    marginTop: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    paddingTop: '8px',
+  },
+  metaphorLiquidBand: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    minHeight: '42px',
+    borderRadius: '999px',
+    color: '#f6fff9',
+    fontWeight: 800,
+    fontSize: '13px',
+    padding: '0 14px',
+    boxShadow: '0 10px 20px rgba(28, 94, 61, 0.12)',
+  },
+  metaphorConnector: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  metaphorPipe: {
+    width: '16px',
+    flex: 1,
+    minHeight: '48px',
+    borderRadius: '999px',
+    background: 'linear-gradient(180deg, #d7e6dc 0%, #b8d4c3 100%)',
+  },
+  metaphorFilterCore: {
+    width: '100%',
+    borderRadius: '22px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    boxShadow: '0 12px 24px rgba(32, 68, 43, 0.08)',
+  },
+  metaphorFilterLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    color: '#6c8072',
+    fontWeight: 800,
+  },
+  metaphorFilterValue: {
+    fontSize: '18px',
+    lineHeight: 1.25,
+    color: '#173c2d',
+  },
+  metaphorFilterText: {
+    margin: 0,
+    color: '#567064',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  metaphorOutputStack: {
+    marginTop: 'auto',
+    display: 'grid',
+    gap: '10px',
+  },
+  metaphorOutputCard: {
+    borderRadius: '16px',
+    border: '1px solid #dbe4f5',
+    background: '#ffffff',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  metaphorOutputLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#687b9e',
+    fontWeight: 800,
+  },
+  metaphorOutputValue: {
+    fontSize: '13px',
+    lineHeight: 1.5,
+    color: '#234032',
+  },
+  metaphorLegend: {
+    marginTop: '16px',
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+  },
+  metaphorLegendPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '8px 12px',
+    background: '#fff3d9',
+    color: '#8a5a0e',
+    fontSize: '12px',
+    fontWeight: 800,
+  },
+  metaphorLegendText: {
+    margin: 0,
+    color: '#5f7366',
+    fontSize: '13px',
+    lineHeight: 1.55,
+    flex: 1,
+    minWidth: '240px',
+  },
+  runTrustHero: {
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f4faf6 100%)',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  runTrustTitle: {
+    margin: 0,
+    fontSize: '22px',
+    lineHeight: 1.2,
+    color: '#173c2d',
+  },
+  runTrustCopy: {
+    margin: 0,
+    color: '#486051',
+    fontSize: '14px',
+    lineHeight: 1.6,
+  },
+  runTrustMeta: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  runTrustGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: '12px',
+  },
+  runTrustCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  runTrustCardTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '10px',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  runTrustLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#667c70',
+    fontWeight: 800,
+  },
+  runTrustCardBody: {
+    margin: 0,
+    color: '#587064',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  runTrustPillGood: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '7px 10px',
+    background: '#e3f6ea',
+    color: '#17633d',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  runTrustPillWatch: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '7px 10px',
+    background: '#fff2db',
+    color: '#8b5609',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  runTrustPillRisk: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '7px 10px',
+    background: '#ffe3e0',
+    color: '#9c2f2e',
+    fontWeight: 800,
+    fontSize: '12px',
   },
   educationFlowGrid: {
     display: 'grid',
@@ -3315,6 +4073,46 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '12px',
   },
   miniStatusMuted: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#edf1ef',
+    color: '#56695e',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStagePill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#ecf7ef',
+    color: '#24673e',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStagePillSecondary: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#eef3ff',
+    color: '#38549a',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStagePillAccent: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    padding: '6px 10px',
+    background: '#fff2db',
+    color: '#8b5609',
+    fontWeight: 800,
+    fontSize: '12px',
+  },
+  miniStagePillMuted: {
     display: 'inline-flex',
     alignItems: 'center',
     borderRadius: '999px',
@@ -3525,6 +4323,163 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '13px',
     lineHeight: 1.5,
     wordBreak: 'break-word',
+  },
+  educationStageRail: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+  },
+  educationStageButton: {
+    position: 'relative',
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f5faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    textAlign: 'left',
+    cursor: 'pointer',
+    minHeight: '178px',
+  },
+  educationStageButtonActive: {
+    position: 'relative',
+    borderRadius: '18px',
+    border: '1px solid #99c4aa',
+    background: 'linear-gradient(180deg, #eef8f1 0%, #e2f1e8 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    textAlign: 'left',
+    cursor: 'pointer',
+    minHeight: '178px',
+    boxShadow: '0 10px 24px rgba(36, 103, 62, 0.12)',
+  },
+  educationStageEyebrow: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.09em',
+    color: '#5f7166',
+    fontWeight: 800,
+  },
+  educationStageTitle: {
+    fontSize: '17px',
+    lineHeight: 1.35,
+    color: '#173c2d',
+  },
+  educationStageSummary: {
+    color: '#486051',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  educationStageArrow: {
+    position: 'absolute',
+    right: '12px',
+    bottom: '12px',
+    fontSize: '20px',
+    color: '#5d7165',
+    fontWeight: 800,
+  },
+  educationDetailCard: {
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f4faf6 100%)',
+    padding: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  educationDetailLead: {
+    margin: 0,
+    color: '#2d4739',
+    fontSize: '14px',
+    lineHeight: 1.6,
+  },
+  educationDetailGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '12px',
+  },
+  educationDetailBlock: {
+    borderRadius: '16px',
+    border: '1px solid #e0ebe3',
+    background: '#ffffff',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  educationDetailLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#678070',
+    fontWeight: 800,
+  },
+  educationDetailBody: {
+    margin: 0,
+    color: '#385244',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  hfFactsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: '12px',
+  },
+  hfFactCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  hfFactLabel: {
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#607569',
+    fontWeight: 800,
+  },
+  hfFactValue: {
+    fontSize: '20px',
+    lineHeight: 1.2,
+    color: '#173c2d',
+  },
+  hfFactBody: {
+    margin: 0,
+    color: '#587064',
+    fontSize: '13px',
+    lineHeight: 1.55,
+  },
+  implementationStateGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '12px',
+  },
+  implementationStateCard: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f6faf7 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  implementationStateTitle: {
+    margin: 0,
+    fontSize: '17px',
+    lineHeight: 1.3,
+    color: '#173c2d',
+  },
+  implementationStateCopy: {
+    margin: 0,
+    color: '#607367',
+    fontSize: '13px',
+    lineHeight: 1.55,
   },
   setupFlowGrid: {
     display: 'grid',
