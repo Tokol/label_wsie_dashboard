@@ -181,6 +181,79 @@ type DistillationExportResponse = {
 
 const API_BASE = 'https://label-wise-server.onrender.com/api'
 
+const teacherNodes = [
+  { x: 70, y: 175, r: 18, fill: '#e34b44' },
+  { x: 70, y: 245, r: 18, fill: '#e34b44' },
+  { x: 150, y: 105, r: 19, fill: '#e34b44' },
+  { x: 150, y: 175, r: 19, fill: '#e34b44' },
+  { x: 150, y: 245, r: 19, fill: '#e34b44' },
+  { x: 150, y: 315, r: 19, fill: '#e34b44' },
+  { x: 240, y: 125, r: 18, fill: '#6f82d9' },
+  { x: 240, y: 185, r: 18, fill: '#6f82d9' },
+  { x: 240, y: 245, r: 18, fill: '#6f82d9' },
+  { x: 240, y: 305, r: 18, fill: '#6f82d9' },
+  { x: 330, y: 155, r: 18, fill: '#e7b164' },
+  { x: 330, y: 225, r: 18, fill: '#e7b164' },
+  { x: 330, y: 295, r: 18, fill: '#e7b164' },
+  { x: 390, y: 190, r: 17, fill: '#9a86cc' },
+  { x: 390, y: 260, r: 17, fill: '#9a86cc' },
+]
+
+const teacherConnections = [
+  { x1: 70, y1: 175, x2: 150, y2: 105 },
+  { x1: 70, y1: 175, x2: 150, y2: 175 },
+  { x1: 70, y1: 245, x2: 150, y2: 175 },
+  { x1: 70, y1: 245, x2: 150, y2: 245 },
+  { x1: 150, y1: 105, x2: 240, y2: 125 },
+  { x1: 150, y1: 105, x2: 240, y2: 185 },
+  { x1: 150, y1: 175, x2: 240, y2: 125 },
+  { x1: 150, y1: 175, x2: 240, y2: 185 },
+  { x1: 150, y1: 175, x2: 240, y2: 245 },
+  { x1: 150, y1: 245, x2: 240, y2: 185 },
+  { x1: 150, y1: 245, x2: 240, y2: 245 },
+  { x1: 150, y1: 245, x2: 240, y2: 305 },
+  { x1: 150, y1: 315, x2: 240, y2: 245 },
+  { x1: 150, y1: 315, x2: 240, y2: 305 },
+  { x1: 240, y1: 125, x2: 330, y2: 155 },
+  { x1: 240, y1: 125, x2: 330, y2: 225 },
+  { x1: 240, y1: 185, x2: 330, y2: 155 },
+  { x1: 240, y1: 185, x2: 330, y2: 225 },
+  { x1: 240, y1: 185, x2: 330, y2: 295 },
+  { x1: 240, y1: 245, x2: 330, y2: 155 },
+  { x1: 240, y1: 245, x2: 330, y2: 225 },
+  { x1: 240, y1: 245, x2: 330, y2: 295 },
+  { x1: 240, y1: 305, x2: 330, y2: 225 },
+  { x1: 240, y1: 305, x2: 330, y2: 295 },
+  { x1: 330, y1: 155, x2: 390, y2: 190 },
+  { x1: 330, y1: 225, x2: 390, y2: 190 },
+  { x1: 330, y1: 225, x2: 390, y2: 260 },
+  { x1: 330, y1: 295, x2: 390, y2: 190 },
+  { x1: 330, y1: 295, x2: 390, y2: 260 },
+]
+
+const studentNodes = [
+  { x: 735, y: 178, r: 17, fill: '#e34b44' },
+  { x: 735, y: 242, r: 17, fill: '#e34b44' },
+  { x: 795, y: 145, r: 17, fill: '#e7b164' },
+  { x: 795, y: 210, r: 17, fill: '#e7b164' },
+  { x: 795, y: 275, r: 17, fill: '#e7b164' },
+  { x: 875, y: 178, r: 17, fill: '#9a86cc' },
+  { x: 875, y: 242, r: 17, fill: '#9a86cc' },
+]
+
+const studentConnections = [
+  { x1: 735, y1: 178, x2: 795, y2: 145 },
+  { x1: 735, y1: 178, x2: 795, y2: 210 },
+  { x1: 735, y1: 242, x2: 795, y2: 210 },
+  { x1: 735, y1: 242, x2: 795, y2: 275 },
+  { x1: 795, y1: 145, x2: 875, y2: 178 },
+  { x1: 795, y1: 145, x2: 875, y2: 242 },
+  { x1: 795, y1: 210, x2: 875, y2: 178 },
+  { x1: 795, y1: 210, x2: 875, y2: 242 },
+  { x1: 795, y1: 275, x2: 875, y2: 178 },
+  { x1: 795, y1: 275, x2: 875, y2: 242 },
+]
+
 function SkeletonCard() {
   return (
     <div style={styles.skeletonCard}>
@@ -1585,50 +1658,11 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
               </div>
               <span style={styles.batchBadge}>{metaphorStageTone}</span>
             </div>
-            <div style={styles.metaphorScene}>
-              <article style={styles.metaphorVesselLarge}>
-                <span style={styles.metaphorLabel}>Large vessel</span>
-                <h3 style={styles.metaphorTitle}>Teacher knowledge</h3>
-                <p style={styles.metaphorBody}>
-                  Richer reasoning from the current app flow and teacher output. This side carries the expensive intelligence and produces the supervision signal.
-                </p>
-                <div style={styles.metaphorLiquidStack}>
-                  <span style={{ ...styles.metaphorLiquidBand, width: '88%', background: 'linear-gradient(90deg, #1b6d49 0%, #4fc08d 100%)' }}>Teacher result</span>
-                  <span style={{ ...styles.metaphorLiquidBand, width: '78%', background: 'linear-gradient(90deg, #2f7a4b 0%, #6fc8a1 100%)' }}>Preferences</span>
-                  <span style={{ ...styles.metaphorLiquidBand, width: '70%', background: 'linear-gradient(90deg, #2d8f63 0%, #8fd7b7 100%)' }}>Product facts</span>
-                </div>
-              </article>
-
-              <div style={styles.metaphorConnector}>
-                <div style={styles.metaphorPipe} />
-                <div style={styles.metaphorFilterCore}>
-                  <span style={styles.metaphorFilterLabel}>Curation filter</span>
-                  <strong style={styles.metaphorFilterValue}>{selectedEducationStage === 'curation' ? 'Review active' : 'Approve only useful records'}</strong>
-                  <p style={styles.metaphorFilterText}>
-                    The dashboard decides what continues into training and what gets excluded.
-                  </p>
-                </div>
-                <div style={styles.metaphorPipe} />
-              </div>
-
-              <article style={styles.metaphorVesselSmall}>
-                <span style={styles.metaphorLabel}>Small vessel</span>
-                <h3 style={styles.metaphorTitle}>Student model</h3>
-                <p style={styles.metaphorBody}>
-                  A smaller Qwen-based model plus LoRA adapter that is cheaper to host later, but only after the workflow has produced a usable artifact.
-                </p>
-                <div style={styles.metaphorOutputStack}>
-                  <div style={styles.metaphorOutputCard}>
-                    <span style={styles.metaphorOutputLabel}>Current output</span>
-                    <strong style={styles.metaphorOutputValue}>{selectedEducationCard.outputs}</strong>
-                  </div>
-                  <div style={styles.metaphorOutputCard}>
-                    <span style={styles.metaphorOutputLabel}>Future role</span>
-                    <strong style={styles.metaphorOutputValue}>Lower-cost inference when serving is added later</strong>
-                  </div>
-                </div>
-              </article>
-            </div>
+            <DistillationDiagram
+              selectedStage={selectedEducationStage}
+              onSelectStage={setSelectedEducationStage}
+              selectedStageOutput={selectedEducationCard.outputs}
+            />
             <div style={styles.metaphorLegend}>
               <span style={styles.metaphorLegendPill}>Metaphor only</span>
               <p style={styles.metaphorLegendText}>
@@ -2717,6 +2751,135 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
   )
 }
 
+function DistillationDiagram({
+  selectedStage,
+  onSelectStage,
+  selectedStageOutput,
+}: {
+  selectedStage: 'teacher' | 'curation' | 'training' | 'artifact' | 'activation'
+  onSelectStage: (stage: 'teacher' | 'curation' | 'training' | 'artifact' | 'activation') => void
+  selectedStageOutput: string
+}) {
+  const teacherActive = selectedStage === 'teacher'
+  const curationActive = selectedStage === 'curation'
+  const trainingActive = selectedStage === 'training'
+  const artifactActive = selectedStage === 'artifact'
+  const activationActive = selectedStage === 'activation'
+  const studentActive = artifactActive || activationActive
+
+  return (
+    <div style={styles.diagramShell}>
+      <svg viewBox="0 0 960 500" role="img" aria-label="Interactive knowledge distillation diagram" style={styles.diagramSvg}>
+        <defs>
+          <linearGradient id="teacherGlow" x1="0%" x2="100%">
+            <stop offset="0%" stopColor="#f9fbff" />
+            <stop offset="100%" stopColor="#eef4ff" />
+          </linearGradient>
+          <linearGradient id="studentGlow" x1="0%" x2="100%">
+            <stop offset="0%" stopColor="#fbfdff" />
+            <stop offset="100%" stopColor="#f3f6ff" />
+          </linearGradient>
+          <linearGradient id="transferGlow" x1="0%" x2="100%">
+            <stop offset="0%" stopColor="#fef6e6" />
+            <stop offset="100%" stopColor="#fff0cf" />
+          </linearGradient>
+          <linearGradient id="dataGlow" x1="0%" x2="100%">
+            <stop offset="0%" stopColor="#f3fbf5" />
+            <stop offset="100%" stopColor="#e6f4ea" />
+          </linearGradient>
+          <marker id="diagramArrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z" fill="#6c7ab9" />
+          </marker>
+        </defs>
+
+        <g onClick={() => onSelectStage('teacher')} style={styles.diagramPointer}>
+          <rect x="30" y="40" width="385" height="340" rx="26" fill="url(#teacherGlow)" stroke={teacherActive ? '#596fcb' : '#8da0e2'} strokeWidth={teacherActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <text x="222" y="26" textAnchor="middle" style={styles.diagramHeading}>Teacher Model</text>
+          {teacherConnections.map((line, index) => (
+            <line key={`teacher-line-${index}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke={teacherActive ? '#5e6db0' : '#7d8494'} strokeWidth={teacherActive ? 2.5 : 2} opacity={teacherActive ? 0.9 : 0.7} />
+          ))}
+          {teacherNodes.map((node, index) => (
+            <circle key={`teacher-node-${index}`} cx={node.x} cy={node.y} r={node.r} fill={node.fill} stroke={teacherActive ? '#ffffff' : '#f3f6fb'} strokeWidth="2.5" />
+          ))}
+          <text x="222" y="356" textAnchor="middle" style={styles.diagramCaption}>
+            Teacher outputs from the app produce the richer supervision signal.
+          </text>
+        </g>
+
+        <g onClick={() => onSelectStage('training')} style={styles.diagramPointer}>
+          <text x="575" y="66" textAnchor="middle" style={styles.diagramHeading}>Knowledge Transfer</text>
+          <rect x="445" y="105" width="210" height="155" rx="24" fill="url(#transferGlow)" stroke={trainingActive ? '#d49d33' : '#d5bf83'} strokeWidth={trainingActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <line x1="413" y1="182" x2="445" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
+          <line x1="655" y1="182" x2="710" y2="182" stroke="#6c7ab9" strokeWidth="5" markerEnd="url(#diagramArrow)" />
+          <text x="550" y="165" textAnchor="middle" style={styles.diagramSmallLabel}>Distill</text>
+          <rect x="518" y="126" width="64" height="116" rx="10" fill="#ffffff" stroke={trainingActive ? '#a27416' : '#c2b281'} strokeWidth="2.5" />
+          <text x="550" y="186" textAnchor="middle" transform="rotate(90 550 186)" style={styles.diagramVerticalLabel}>Knowledge</text>
+          <text x="550" y="282" textAnchor="middle" style={styles.diagramCaption}>
+            Curated batches drive the actual training step.
+          </text>
+        </g>
+
+        <g onClick={() => onSelectStage('artifact')} style={styles.diagramPointer}>
+          <rect x="715" y="40" width="215" height="260" rx="26" fill="url(#studentGlow)" stroke={studentActive ? '#687ecc' : '#9eafe5'} strokeWidth={studentActive ? 4 : 2.5} strokeDasharray="10 9" />
+          <text x="823" y="26" textAnchor="middle" style={styles.diagramHeading}>Student Model</text>
+          {studentConnections.map((line, index) => (
+            <line key={`student-line-${index}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke={studentActive ? '#6170b5' : '#7c8492'} strokeWidth={studentActive ? 2.5 : 2} opacity={studentActive ? 0.92 : 0.72} />
+          ))}
+          {studentNodes.map((node, index) => (
+            <circle key={`student-node-${index}`} cx={node.x} cy={node.y} r={node.r} fill={node.fill} stroke={studentActive ? '#ffffff' : '#f3f6fb'} strokeWidth="2.5" />
+          ))}
+          <text x="823" y="276" textAnchor="middle" style={styles.diagramCaption}>
+            Smaller model plus LoRA artifact for cheaper future serving.
+          </text>
+        </g>
+
+        <g onClick={() => onSelectStage('curation')} style={styles.diagramPointer}>
+          <path d="M500 410 L600 410 L600 470 L500 470 Z" fill="url(#dataGlow)" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
+          <ellipse cx="550" cy="410" rx="50" ry="12" fill="#f8fcf8" stroke={curationActive ? '#2d8351' : '#9ac6aa'} strokeWidth={curationActive ? 4 : 2.5} />
+          <text x="550" y="444" textAnchor="middle" style={styles.diagramBoxLabel}>Curated Data</text>
+          <text x="550" y="462" textAnchor="middle" style={styles.diagramBoxSubLabel}>Reviewed export batch</text>
+        </g>
+
+        <g>
+          <line x1="550" y1="410" x2="550" y2="322" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="550" y1="322" x2="222" y2="322" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="822" y1="322" x2="822" y2="300" stroke="#6f7f76" strokeWidth="3" />
+          <line x1="550" y1="322" x2="822" y2="322" stroke="#6f7f76" strokeWidth="3" />
+        </g>
+
+        <g onClick={() => onSelectStage('activation')} style={styles.diagramPointer}>
+          <rect x="730" y="332" width="185" height="52" rx="16" fill="#f5f7f8" stroke={activationActive ? '#6b7b74' : '#c7d1cd'} strokeWidth={activationActive ? 4 : 2.5} />
+          <text x="822" y="353" textAnchor="middle" style={styles.diagramBoxLabel}>Activation</text>
+          <text x="822" y="371" textAnchor="middle" style={styles.diagramBoxSubLabel}>Select one active test model</text>
+        </g>
+      </svg>
+
+      <div style={styles.diagramLegendRow}>
+        <button type="button" style={teacherActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('teacher')}>
+          Teacher signal
+        </button>
+        <button type="button" style={curationActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('curation')}>
+          Curated data
+        </button>
+        <button type="button" style={trainingActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('training')}>
+          Transfer step
+        </button>
+        <button type="button" style={artifactActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('artifact')}>
+          Artifact output
+        </button>
+        <button type="button" style={activationActive ? styles.diagramLegendButtonActive : styles.diagramLegendButton} onClick={() => onSelectStage('activation')}>
+          Activation
+        </button>
+      </div>
+
+      <div style={styles.diagramOutputStrip}>
+        <span style={styles.diagramOutputLabel}>Current selected stage output</span>
+        <strong style={styles.diagramOutputValue}>{selectedStageOutput}</strong>
+      </div>
+    </div>
+  )
+}
+
 function DetailTabButton({
   label,
   active,
@@ -3794,6 +3957,98 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.55,
     flex: 1,
     minWidth: '240px',
+  },
+  diagramShell: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  diagramSvg: {
+    width: '100%',
+    height: 'auto',
+    display: 'block',
+    borderRadius: '24px',
+    background: 'linear-gradient(180deg, #fbfdfc 0%, #f3f7f4 100%)',
+    border: '1px solid #dce7dd',
+  },
+  diagramPointer: {
+    cursor: 'pointer',
+  },
+  diagramHeading: {
+    fontSize: '18px',
+    fontWeight: 800,
+    fill: '#24352d',
+  },
+  diagramCaption: {
+    fontSize: '13px',
+    fill: '#5c6e63',
+    fontWeight: 600,
+  },
+  diagramSmallLabel: {
+    fontSize: '18px',
+    fill: '#536074',
+    fontWeight: 800,
+  },
+  diagramVerticalLabel: {
+    fontSize: '18px',
+    fill: '#27342d',
+    fontWeight: 800,
+  },
+  diagramBoxLabel: {
+    fontSize: '18px',
+    fill: '#24352d',
+    fontWeight: 800,
+  },
+  diagramBoxSubLabel: {
+    fontSize: '12px',
+    fill: '#5b6d62',
+    fontWeight: 700,
+  },
+  diagramLegendRow: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
+  diagramLegendButton: {
+    border: '1px solid #d4dfd6',
+    background: '#ffffff',
+    color: '#2e493a',
+    padding: '8px 12px',
+    borderRadius: '999px',
+    fontWeight: 700,
+    fontSize: '12px',
+    cursor: 'pointer',
+  },
+  diagramLegendButtonActive: {
+    border: '1px solid #7ca58d',
+    background: '#ecf7ef',
+    color: '#24673e',
+    padding: '8px 12px',
+    borderRadius: '999px',
+    fontWeight: 800,
+    fontSize: '12px',
+    cursor: 'pointer',
+  },
+  diagramOutputStrip: {
+    borderRadius: '18px',
+    border: '1px solid #dce7dd',
+    background: '#fbfdfb',
+    padding: '14px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  diagramOutputLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6b8072',
+    fontWeight: 800,
+  },
+  diagramOutputValue: {
+    fontSize: '15px',
+    lineHeight: 1.5,
+    color: '#234032',
   },
   runTrustHero: {
     borderRadius: '20px',
