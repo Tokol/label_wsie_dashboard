@@ -1307,6 +1307,20 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
       ? (extractEvaluationMetric(comparisonLeftVersion.metrics_json, 'eval_loss') ?? 0) - (extractEvaluationMetric(comparisonRightVersion.metrics_json, 'eval_loss') ?? 0)
       : null
   const comparisonSummary = buildVersionComparisonSummary(comparisonLeftVersion, comparisonRightVersion)
+  const lineageEntries = modelVersions.map((version) => {
+    const job = distillationJobs.find((item) => item.id === version.job_id) ?? null
+    const batch = exportBatches.find((item) => item.batch_id === version.batch_id) ?? null
+    return {
+      version,
+      job,
+      batch,
+      active: version.status === 'active_test',
+    }
+  }).sort((left, right) => {
+    if (left.active && !right.active) return -1
+    if (!left.active && right.active) return 1
+    return right.version.id - left.version.id
+  })
 
   function openCurationWorkspace() {
     if (['exported', 'used_in_training', 'archived'].includes(distillationFilter)) {
@@ -2078,6 +2092,90 @@ files.download('/content/label_wise_artifacts/${colabJob.batch_id}/model_artifac
                 </div>
               )}
             </section>
+          </section>
+
+          <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['curation', 'training', 'artifact', 'activation']) }}>
+            <div style={styles.pipelinePanelHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>Model Lineage</h2>
+                <p style={styles.cardSubtitle}>
+                  Trace each version back to the batch and training job that produced it. This is the provenance view for the current research pipeline.
+                </p>
+              </div>
+              <span style={styles.batchBadge}>{lineageEntries.length} chains</span>
+            </div>
+            <div style={styles.stageContextBar}>
+              <span style={styles.stageContextPill}>Stages 2-5</span>
+              <p style={styles.stageContextText}>
+                This view connects the curated dataset, the training attempt, the resulting model version, and the currently active selection.
+              </p>
+            </div>
+            {lineageEntries.length > 0 ? (
+              <div style={styles.lineageGrid}>
+                {lineageEntries.map((entry) => (
+                  <article
+                    key={`lineage-${entry.version.id}`}
+                    style={{
+                      ...styles.lineageCard,
+                      ...(entry.active ? styles.lineageCardActive : null),
+                    }}
+                  >
+                    <div style={styles.lineageHeader}>
+                      <div>
+                        <span style={styles.lineageEyebrow}>{entry.active ? 'Active lineage' : 'Version lineage'}</span>
+                        <h3 style={styles.lineageTitle}>{entry.version.model_name}</h3>
+                      </div>
+                      <span style={entry.active ? styles.batchReadyPill : styles.batchUsedPill}>
+                        {entry.active ? 'Active test model' : displayModelVersionStatus(entry.version.status)}
+                      </span>
+                    </div>
+                    <div style={styles.lineageChain}>
+                      <div style={styles.lineageNode}>
+                        <span style={styles.lineageNodeLabel}>Batch</span>
+                        <strong style={styles.lineageNodeValue}>{entry.batch?.batch_id ?? entry.version.batch_id}</strong>
+                        <span style={styles.lineageNodeMeta}>
+                          {entry.batch ? `${entry.batch.exported_count} records` : 'Batch summary unavailable'}
+                        </span>
+                      </div>
+                      <div style={styles.lineageArrow}>→</div>
+                      <div style={styles.lineageNode}>
+                        <span style={styles.lineageNodeLabel}>Job</span>
+                        <strong style={styles.lineageNodeValue}>{entry.job ? `#${entry.job.id}` : `#${entry.version.job_id}`}</strong>
+                        <span style={styles.lineageNodeMeta}>
+                          {entry.job ? displayJobStatus(entry.job.status) : 'Job summary unavailable'}
+                        </span>
+                      </div>
+                      <div style={styles.lineageArrow}>→</div>
+                      <div style={styles.lineageNode}>
+                        <span style={styles.lineageNodeLabel}>Version</span>
+                        <strong style={styles.lineageNodeValue}>{entry.version.model_name}</strong>
+                        <span style={styles.lineageNodeMeta}>
+                          {displayModelVersionStatus(entry.version.status)}
+                        </span>
+                      </div>
+                      <div style={styles.lineageArrow}>→</div>
+                      <div style={styles.lineageNode}>
+                        <span style={styles.lineageNodeLabel}>Activation</span>
+                        <strong style={styles.lineageNodeValue}>{entry.active ? 'Selected' : 'Standby'}</strong>
+                        <span style={styles.lineageNodeMeta}>
+                          {entry.version.activated_at ? formatDateTime(entry.version.activated_at) : 'Not active'}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={styles.lineageFooter}>
+                      <span style={styles.lineageFootnote}>
+                        {entry.job?.artifact_uri ?? entry.version.artifact_uri ?? 'No artifact URI recorded yet'}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div style={styles.emptyStateCard}>
+                <h3 style={styles.emptyStateTitle}>No lineage to show yet</h3>
+                <p style={styles.emptyPanelText}>Complete at least one job so the dashboard can connect a batch, a job, and a model version.</p>
+              </div>
+            )}
           </section>
 
           <section style={{ ...styles.pipelinePanel, ...stagePanelHighlight(selectedEducationStage, ['artifact', 'activation']) }}>
@@ -4955,6 +5053,97 @@ const styles: Record<string, CSSProperties> = {
     color: '#607367',
     fontSize: '13px',
     lineHeight: 1.55,
+  },
+  lineageGrid: {
+    display: 'grid',
+    gap: '14px',
+  },
+  lineageCard: {
+    borderRadius: '20px',
+    border: '1px solid #dce7dd',
+    background: 'linear-gradient(180deg, #fbfdfb 0%, #f4faf6 100%)',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+  lineageCardActive: {
+    borderColor: '#98c5aa',
+    boxShadow: '0 14px 28px rgba(36, 103, 62, 0.12)',
+    background: 'linear-gradient(180deg, #f6fcf8 0%, #edf8f1 100%)',
+  },
+  lineageHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+  },
+  lineageEyebrow: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#667b6f',
+    fontWeight: 800,
+  },
+  lineageTitle: {
+    margin: '6px 0 0',
+    fontSize: '20px',
+    lineHeight: 1.25,
+    color: '#173c2d',
+  },
+  lineageChain: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr) 26px minmax(0, 1fr) 26px minmax(0, 1fr)',
+    gap: '10px',
+    alignItems: 'center',
+  },
+  lineageNode: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    minHeight: '102px',
+  },
+  lineageNodeLabel: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: '#6b8074',
+    fontWeight: 800,
+  },
+  lineageNodeValue: {
+    fontSize: '16px',
+    lineHeight: 1.35,
+    color: '#173c2d',
+  },
+  lineageNodeMeta: {
+    fontSize: '12px',
+    lineHeight: 1.5,
+    color: '#5c7266',
+  },
+  lineageArrow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#73859e',
+    fontWeight: 900,
+    fontSize: '22px',
+  },
+  lineageFooter: {
+    borderRadius: '16px',
+    border: '1px solid #dce7dd',
+    background: '#ffffff',
+    padding: '12px 14px',
+  },
+  lineageFootnote: {
+    fontSize: '12px',
+    lineHeight: 1.5,
+    color: '#556b60',
+    wordBreak: 'break-word',
   },
   versionCompareShell: {
     marginBottom: '18px',
